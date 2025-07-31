@@ -1,0 +1,14 @@
+{
+    "name": "you/khatabook-saas",
+    "description": "Headless SaaS plugin for Khatabook-style invoicing system",
+    "type": "wordpress-plugin",
+    "autoload": {
+      "psr-4": {
+        "KBS\\": "backend/"
+      }
+    },
+    "require": {
+      "mpdf/mpdf": "^8.2"
+    }
+  }
+  
