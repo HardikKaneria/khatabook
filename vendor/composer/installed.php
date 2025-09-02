@@ -3,7 +3,7 @@
         'name' => 'you/khatabook-saas',
         'pretty_version' => 'dev-main',
         'version' => 'dev-main',
-        'reference' => 'f19297dd3fb06a74f44f24acd201f4f892de251c',
+        'reference' => 'fd246e0b3179bf8ab7157aadcd511de25ebd1b24',
         'type' => 'wordpress-plugin',
         'install_path' => __DIR__ . '/../../',
         'aliases' => array(),
@@ -85,7 +85,7 @@
         'you/khatabook-saas' => array(
             'pretty_version' => 'dev-main',
             'version' => 'dev-main',
-            'reference' => 'f19297dd3fb06a74f44f24acd201f4f892de251c',
+            'reference' => 'fd246e0b3179bf8ab7157aadcd511de25ebd1b24',
             'type' => 'wordpress-plugin',
             'install_path' => __DIR__ . '/../../',
             'aliases' => array(),

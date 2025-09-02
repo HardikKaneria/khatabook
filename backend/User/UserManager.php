@@ -1,26 +1,9 @@
 <?php
 
-namespace KBS\Core;
+namespace KBS\User;
 
 class UserManager
 {
-    /**
-     * Register REST API routes for user management
-     */
-    public static function register_endpoints(): void
-    {
-        register_rest_route('kbs/v1', '/pending-users', [
-            'methods'  => 'GET',
-            'callback' => [self::class, 'get_pending_users'],
-            'permission_callback' => [self::class, 'admin_only'],
-        ]);
-
-        register_rest_route('kbs/v1', '/approve-user', [
-            'methods'  => 'POST',
-            'callback' => [self::class, 'approve_user'],
-            'permission_callback' => [self::class, 'admin_only'],
-        ]);
-    }
 
     /**
      * Only allow admins to access

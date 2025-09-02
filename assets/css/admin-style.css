@@ -1,0 +1,41 @@
+.kbs-admin-wrap {
+	padding: 20px;
+	font-family: 'Segoe UI', sans-serif;
+	background: #fefefe;
+}
+
+.kbs-title {
+	font-size: 26px;
+	margin-bottom: 20px;
+	color: #222;
+}
+
+.kbs-table {
+	width: 100%;
+	border-collapse: collapse;
+	background: #fff;
+}
+
+.kbs-table th,
+.kbs-table td {
+	border: 1px solid #ddd;
+	padding: 10px;
+	text-align: left;
+}
+
+.kbs-btn {
+	padding: 5px 10px;
+	font-size: 13px;
+	border-radius: 4px;
+	text-decoration: none;
+	color: white;
+	margin-right: 5px;
+}
+
+.kbs-approve {
+	background-color: #28a745;
+}
+
+.kbs-decline {
+	background-color: #dc3545;
+}

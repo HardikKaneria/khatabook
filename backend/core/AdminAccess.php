@@ -6,21 +6,30 @@ class AdminAccess
 {
     public static function restrict_dashboard(): void
     {
-        // If user is logged in and not master_admin, block access to dashboard
         if (
             is_admin() &&
             !defined('DOING_AJAX') &&
-            current_user_can('read') &&
-            !current_user_can('manage_options') // Only master_admin can manage options
+            !current_user_can('edit_posts') &&
+            !(defined('DOING_CRON') && DOING_CRON)
         ) {
-            $screen = get_current_screen();
-
-            // Only block if trying to access the dashboard
-            if ($screen && $screen->base !== 'profile') {
-                wp_redirect(home_url('/client-dashboard')); // Replace with your frontend route
-                exit;
-            }
+            wp_redirect(home_url('/my-account')); // or your custom dashboard
+            exit;
         }
     }
-}
 
+    public static function hide_admin_bar(): void
+    {
+        if (!current_user_can('edit_posts')) {
+            show_admin_bar(false);
+        }
+    }
+
+    public static function redirect_after_login($redirect_to, $request, $user)
+    {
+        if (!is_wp_error($user) && !user_can($user, 'edit_posts')) {
+            return home_url(); // or your React/Frontend dashboard
+        }
+
+        return $redirect_to;
+    }
+}

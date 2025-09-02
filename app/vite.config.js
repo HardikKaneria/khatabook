@@ -1,20 +1,26 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import path from 'path'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import path from 'path';
+import tailwindcss from "tailwindcss";
+
 
 export default defineConfig({
   plugins: [react()],
   root: './src',
-  base: '/', // important for dev mode inside WordPress
+  base: '/',
+
+  css: {
+    postcss: {
+      plugins: [tailwindcss()],
+    },
+  },
 
   server: {
     host: 'localhost',
     port: 5173,
     strictPort: true,
     origin: 'http://localhost:5173',
-    cors: true, // allow loading in WordPress
-
-    // HMR fix for iframe/proxy environments
+    cors: true,
     hmr: {
       protocol: 'ws',
       host: 'localhost',
@@ -23,11 +29,11 @@ export default defineConfig({
   },
 
   build: {
-    outDir: '../app/dist',
+    outDir: '../dist',
     emptyOutDir: true,
     manifest: true,
     rollupOptions: {
       input: path.resolve(__dirname, 'src/main.jsx'),
     },
   },
-})
+});
