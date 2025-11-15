@@ -81,9 +81,17 @@ class OtpAuth
         $wpdb->insert($wpdb->prefix . 'kbs_otp_attempts', $insert, $formats);
 
         // Send email
-        $subject = 'Your OTP Code';
-        $message = "Hello,\n\nYour OTP for " . ucfirst($context) . " is: {$otp}\nIt expires in 5 minutes.\n\nIf you didn’t request this, ignore this email.";
-        $sent    = wp_mail($email, $subject, $message);
+        $subject = 'Your Vyavhar OTP Code';
+        $message = "Use this one-time passcode to continue your " . ucfirst($context) . ":\n\n{$otp}\n\nThis code expires in 5 minutes. If you didn’t request it, you can safely ignore this email.";
+        if (function_exists('kbs_send_email')) {
+            $sent = \kbs_send_email($email, $subject, $message, [
+                'greeting'   => 'Hello,',
+                'cta_label'  => $context === 'login' ? 'Continue login' : 'Continue registration',
+                'cta_url'    => home_url('/login'),
+            ]);
+        } else {
+            $sent = wp_mail($email, $subject, $message);
+        }
 
         if (!$sent) {
             return new WP_Error('email_failed', 'Failed to send OTP email.', ['status' => 500]);

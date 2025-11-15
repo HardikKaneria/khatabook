@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Form, Input, Button, Typography, message, Space, Alert, Card, Divider } from "antd";
+import { Form, Input, Button, Typography, Space, Alert, Card, Divider } from "antd";
 import { PoweroffOutlined, SyncOutlined, MailOutlined, SafetyCertificateOutlined, ArrowLeftOutlined, ReloadOutlined } from "@ant-design/icons";
 import Registration from "./Registration";
-
+import { saveAuth } from "../utils/authStorage"; // ⬅️ IMPORTANT
+import { useToast } from "../components/ToastProvider";
 
 const { Title, Text } = Typography;
 
@@ -17,7 +18,8 @@ export default function Login() {
     const [cooldown, setCooldown] = useState(0);
     const cooldownRef = useRef(0);
 
-    // Cooldown ticker for resend OTP
+    const msg = useToast();
+
     useEffect(() => {
         cooldownRef.current = cooldown;
         if (cooldown <= 0) return;
@@ -48,35 +50,35 @@ export default function Login() {
             try { result = await res.json(); } catch { }
 
             if (res.status === 404) {
-                const msg = "Server not found. Please try again later.";
-                message.error(msg);
-                setErrorMessage(msg);
+                const msgText = "Server not found. Please try again later.";
+                msg.error(msgText);
+                setErrorMessage(msgText);
                 return;
             }
 
             if (result?.status === "not_registered") {
-                const msg = result?.message || "Email is not registered.";
-                message.error(msg);
-                setErrorMessage(msg);
+                const msgText = result?.message || "Email is not registered.";
+                msg.error(msgText);
+                setErrorMessage(msgText);
                 return;
             }
 
             if (!res.ok) {
-                const msg = result?.message || "Failed to send OTP.";
-                message.error(msg);
-                setErrorMessage(msg);
+                const msgText = result?.message || "Failed to send OTP.";
+                msg.error(msgText);
+                setErrorMessage(msgText);
                 return;
             }
 
-            message.success("OTP sent to your email.");
+            msg.success("OTP sent to your email.");
             setEmail(values?.email || "");
             setOtpSent(true);
             setCooldown(45);
             setTimeout(() => form.setFieldsValue({ otp: "" }), 0);
         } catch (e) {
-            const msg = "Network error. Please try again.";
-            message.error(msg);
-            setErrorMessage(msg);
+            const msgText = "Network error. Please try again.";
+            msg.error(msgText);
+            setErrorMessage(msgText);
         } finally {
             setSending(false);
         }
@@ -86,7 +88,7 @@ export default function Login() {
         try {
             const otp = form.getFieldValue("otp");
             if (!otp) {
-                message.error("Please enter the OTP.");
+                msg.error("Please enter the OTP.");
                 return;
             }
 
@@ -105,18 +107,18 @@ export default function Login() {
 
             if (response.ok && result?.status === "authenticated") {
                 await saveAuth(result);
-                message.success("Logged in successfully.");
+                msg.success("Logged in successfully.");
                 window.location.href = "/home";
             } else {
-                const msg = result?.message || "OTP verification failed.";
-                message.error(msg);
-                setErrorMessage(msg);
+                const msgText = result?.message || "OTP verification failed.";
+                msg.error(msgText);
+                setErrorMessage(msgText);
             }
         } catch (error) {
             console.error("OTP verification failed:", error);
-            const msg = "Something went wrong. Please try again.";
-            message.error(msg);
-            setErrorMessage(msg);
+            const msgText = "Something went wrong. Please try again.";
+            msg.error(msgText);
+            setErrorMessage(msgText);
         } finally {
             setVerifying(false);
         }
@@ -131,7 +133,7 @@ export default function Login() {
         if (!canResend) return;
         const currentEmail = email || form.getFieldValue("email");
         if (!currentEmail) {
-            message.warning("Please enter your email first.");
+            msg.warning("Please enter your email first.");
             return;
         }
         await handleSendOtp({ email: currentEmail });
@@ -143,7 +145,7 @@ export default function Login() {
         setErrorMessage("");
         form.resetFields(["otp"]);
         setTimeout(() => {
-            form.setFieldsValue({ email }); 
+            form.setFieldsValue({ email });
         }, 0);
     };
 
@@ -167,7 +169,7 @@ export default function Login() {
                     borderRadius: 12,
                     boxShadow: "0 8px 24px rgba(18, 18, 18, 0.08)",
                 }}
-                bodyStyle={{ padding: 28 }}
+                styles={{ body: { padding: 28 } }} // ← replace bodyStyle
             >
                 <div style={{ textAlign: "center", marginBottom: 8 }}>
                     <Title level={3} style={{ marginBottom: 4 }}>Login</Title>

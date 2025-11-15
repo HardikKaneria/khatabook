@@ -10,8 +10,8 @@ class AdminMenu {
 
 	public static function register_menu() {
 		add_menu_page(
-			'Khatabook Admin',
-			'Khatabook Admin',
+			'Vyavhar Admin',
+			'Vyavhar Admin',
 			'manage_options',
 			'kbs-admin',
 			[self::class, 'render_pending_users'],

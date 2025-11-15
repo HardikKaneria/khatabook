@@ -1,19 +1,36 @@
+// ResponsiveShell.jsx
 import React, { useEffect, useMemo, useState } from "react";
-import { Layout, Menu, Button, Typography, Space, Grid } from "antd";
 import {
+    Layout,
+    Menu,
+    Grid,
+    Button,
+    Typography,
+} from "antd";
+import {
+    MenuFoldOutlined,
+    MenuUnfoldOutlined,
     HomeOutlined,
     TeamOutlined,
     FileOutlined,
-    LogoutOutlined,
     SettingOutlined,
 } from "@ant-design/icons";
+import logo from "../assets/logo.svg";
+import logoCompact from "../assets/V_logo.svg";
 
 const { Header, Content, Footer, Sider } = Layout;
 const { Title } = Typography;
 const { useBreakpoint } = Grid;
 
-const SIDEBAR_WIDTH = 240;
+const SIDEBAR_FULL = 240;   // expanded width
+const SIDEBAR_COLLAPSED = 64; // collapsed width
 const HEADER_HEIGHT = 64;
+
+function navigate(href, { replace = false } = {}) {
+    if (replace) window.history.replaceState({}, "", href);
+    else window.history.pushState({}, "", href);
+    window.dispatchEvent(new PopStateEvent("popstate"));
+}
 
 function getKeyFromLocation() {
     if (typeof window === "undefined") return "home";
@@ -21,205 +38,211 @@ function getKeyFromLocation() {
     return seg || "home";
 }
 
-function navigate(href, { replace = false } = {}) {
-    if (replace) {
-        window.history.replaceState({}, "", href);
-    } else {
-        window.history.pushState({}, "", href);
-    }
-    window.dispatchEvent(new PopStateEvent("popstate"));
-}
-
-function isNewTabEvent(e) {
-    // allow normal browser behavior for new tab/window
-    return e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1;
-}
-
-const DashboardLayout = ({ children, user }) => {
-    const { logout } = useAuth();
-    const [loggingOut, setLoggingOut] = useState(false);
+export default function ResponsiveShell({ children, user }) {
     const screens = useBreakpoint();
     const isDesktop = !!screens.lg;
 
-    const userName = user?.display_name || user?.name || "User";
-    const role = user?.role || "";
-
-    // Keep the selected key in sync with SPA navigation
+    // collapsed state (true: collapsed or closed)
+    const [collapsed, setCollapsed] = useState(false);
+    // active menu key from URL
     const [activeKey, setActiveKey] = useState(getKeyFromLocation());
+
+    // When crossing the lg breakpoint, default to collapsed on mobile, expanded on desktop
+    useEffect(() => {
+        setCollapsed(!isDesktop); // collapsed on mobile, open on desktop
+    }, [isDesktop]);
+
+    // Sync active key on history changes
     useEffect(() => {
         const onPop = () => setActiveKey(getKeyFromLocation());
         window.addEventListener("popstate", onPop);
         return () => window.removeEventListener("popstate", onPop);
     }, []);
 
+    // Menu items (example – add your own)
+    const role = user?.role || "";
     const navItems = useMemo(() => {
-        const items = [
-            { key: "home", label: "Home", icon: <HomeOutlined />, href: "/home" },
-            { key: "accounts", label: "Accounts", icon: <TeamOutlined />, href: "/accounts" },
-            { key: "invoices", label: "Invoices", icon: <FileOutlined />, href: "/invoices" },
+        const base = [
+            { key: "home", icon: <HomeOutlined />, label: "Home", href: "/home" },
+            { key: "accounts", icon: <TeamOutlined />, label: "Accounts", href: "/accounts" },
+            { key: "invoices", icon: <FileOutlined />, label: "Invoices", href: "/invoices" },
         ];
         if (role === "company_admin") {
-            items.push(
-                { key: "company-settings", label: "Company Settings", icon: <SettingOutlined />, href: "/company-settings" },
-                { key: "users", label: "Users", icon: <TeamOutlined />, href: "/users" });
+            base.push(
+                { key: "company-settings", icon: <SettingOutlined />, label: "Company Settings", href: "/company-settings" },
+                { key: "users", icon: <TeamOutlined />, label: "Users", href: "/users" },
+            );
         }
-        return items;
+        return base;
     }, [role]);
 
-    const menuItems = useMemo(
-        () =>
-            navItems.map((it) => ({
-                key: it.key,
-                icon: it.icon,
-                label: (
-                    <a
-                        href={it.href}
-                        onClick={(e) => {
-                            if (isNewTabEvent(e)) return; // let browser open a new tab/window
-                            e.preventDefault();
-                            navigate(it.href);
-                            setActiveKey(it.key);
-                        }}
-                        style={{ color: "inherit" }}
-                        aria-label={it.label}
-                        aria-current={activeKey === it.key ? "page" : undefined}
-                    >
-                        {it.label}
-                    </a>
-                ),
-            })),
-        [navItems, activeKey]
-    );
+    const menuItems = navItems.map((it) => ({
+        key: it.key,
+        icon: it.icon,
+        label: (
+            <a
+                href={it.href}
+                onClick={(e) => {
+                    // SPA navigate
+                    e.preventDefault();
+                    navigate(it.href);
+                    setActiveKey(it.key);
+                    // On mobile, close the sidebar after navigation
+                    if (!isDesktop) setCollapsed(true);
+                }}
+                style={{ color: "inherit" }}
+                aria-current={activeKey === it.key ? "page" : undefined}
+            >
+                {it.label}
+            </a>
+        ),
+    }));
+
+    // Layout width offset for content when sidebar is visible on desktop
+    const contentOffsetLeft = isDesktop
+        ? (collapsed ? SIDEBAR_COLLAPSED : SIDEBAR_FULL)
+        : 0;
+
+    // Toggle button icon
+    const ToggleIcon = collapsed ? MenuUnfoldOutlined : MenuFoldOutlined;
 
     const handleLogout = async () => {
-        if (loggingOut) return;
-        setLoggingOut(true);
         try {
             await fetch("/wp-json/kbs/v1/logout", { method: "POST", credentials: "include" });
-        } catch (e) {
-            // Non-fatal: still clear client state
-            console.error("Logout failed:", e);
-        }
-        logout();                 // clear in-memory auth (no storage, no reload)
-        navigate("/login");       // SPA navigate to login
-        setLoggingOut(false);
+        } catch (_) { }
+        // local cleanup
+        localStorage.removeItem("auth_token");
+        localStorage.removeItem("token_expires_at");
+        localStorage.removeItem("user_name");
+        localStorage.removeItem("role");
+        sessionStorage.removeItem("kbs_rest_root");
+        sessionStorage.removeItem("kbs_rest_nonce");
+        window.location.href = "/?action=logout";
     };
 
     return (
-        <Layout style={{ minHeight: "100vh", width: "100vw", background: "#F8FAFC" }}>
-            {/* FIXED SIDEBAR (desktop) */}
+        <div style={{ minHeight: "100vh", background: "#F8FAFC" }}>
+            {/* Fixed Sider */}
             <Sider
-                breakpoint="lg"
-                collapsedWidth={0}
-                width={SIDEBAR_WIDTH}
+                // When on desktop we use collapsed width 64; on mobile we "collapse to 0"
+                collapsedWidth={isDesktop ? SIDEBAR_COLLAPSED : 0}
+                width={SIDEBAR_FULL}
+                collapsed={collapsed}
+                onCollapse={(v) => setCollapsed(v)}
                 style={{
-                    position: isDesktop ? "fixed" : "static",
+                    position: "fixed",
                     top: 0,
                     left: 0,
                     bottom: 0,
-                    height: isDesktop ? "100vh" : "auto",
+                    height: "100vh",
                     zIndex: 101,
-                    background: "#FFFFFF",
-                    borderRight: "1px solid #e5e7eb",
                 }}
+                breakpoint="lg"
+                theme="light"
             >
                 <div
+                    onClick={() => {
+                        navigate("/home");
+                        setActiveKey("home");
+                        if (!isDesktop) setCollapsed(true);
+                    }}
                     style={{
                         height: HEADER_HEIGHT,
                         display: "flex",
                         alignItems: "center",
-                        padding: "0 20px",
+                        padding: "0 16px",
                         fontWeight: 700,
                         fontSize: 18,
                         letterSpacing: 0.4,
                         color: "#121212",
-                        borderBottom: "1px solid #12121220",
-                        fontFamily: "Urbanist, system-ui, sans-serif",
+                        borderBottom: "1px solid #e5e7eb",
                         cursor: "pointer",
-                    }}
-                    onClick={(e) => {
-                        if (isNewTabEvent(e)) return;
-                        navigate("/home");
-                        setActiveKey("home");
-                    }}
-                    title="Go to Home"
-                    role="link"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                            e.preventDefault();
-                            navigate("/home");
-                            setActiveKey("home");
-                        }
+                        justifyContent: "center",
                     }}
                 >
-                    KHATABOOK
+                    <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <img
+                            src={collapsed ? logoCompact : logo}
+                            alt="Vyavhar"
+                            style={{ height: collapsed ? 24 : 26, width: "auto" }}
+                        />
+                    </div>
                 </div>
 
                 <Menu
                     mode="inline"
                     selectedKeys={[activeKey]}
                     items={menuItems}
-                    style={{ background: "transparent", padding: "8px 0" }}
+                    style={{ borderRight: 0 }}
                 />
             </Sider>
 
-            {/* MAIN: adds margin-left & padding-top to account for fixed sider/header */}
-            <Layout
-                style={{
-                    marginLeft: isDesktop ? SIDEBAR_WIDTH : 0,
-                    paddingTop: HEADER_HEIGHT,
-                    minHeight: "100vh",
-                    background: "transparent",
-                }}
-            >
-                {/* FIXED HEADER */}
+            {/* Mobile overlay mask when sidebar is open */}
+            {!isDesktop && !collapsed && (
+                <div
+                    onClick={() => setCollapsed(true)}
+                    style={{
+                        position: "fixed",
+                        inset: 0,
+                        background: "rgba(0,0,0,0.35)",
+                        zIndex: 100,
+                    }}
+                />
+            )}
+
+            {/* Main layout block shifted to the right on desktop */}
+            <Layout style={{ marginLeft: contentOffsetLeft }}>
+                {/* Fixed Header */}
                 <Header
                     style={{
                         position: "fixed",
                         top: 0,
-                        left: isDesktop ? SIDEBAR_WIDTH : 0,
+                        left: contentOffsetLeft,
                         right: 0,
                         height: HEADER_HEIGHT,
                         zIndex: 100,
                         background: "#FFFFFF",
-                        padding: "0 20px",
+                        padding: "0 16px",
                         boxShadow: "0 1px 8px rgba(18,18,18,0.06)",
                         display: "flex",
                         alignItems: "center",
-                        justifyContent: "space-between",
+                        gap: 12,
                     }}
                 >
-                    <Space direction="vertical" size={0}>
-                        <Title
-                            level={4}
-                            style={{ margin: 0, color: "#121212", fontFamily: "Urbanist, system-ui, sans-serif" }}
-                        >
-                            Welcome, {userName}
-                        </Title>
-                    </Space>
-
                     <Button
-                        className="kb-logout-button"
-                        danger
-                        icon={<LogoutOutlined />}
-                        onClick={handleLogout}
-                        loading={loggingOut}
-                    >
+                        type="text"
+                        icon={<ToggleIcon />}
+                        onClick={() => setCollapsed((c) => !c)}
+                        aria-label="Toggle sidebar"
+                        style={{ fontSize: 18, width: 40, height: 40 }}
+                    />
+                    <Title level={4} style={{ margin: 0, flex: 1 }}>
+                        Welcome{user?.name ? `, ${user.name}` : ""}
+                    </Title>
+                    <Button danger onClick={handleLogout}>
                         Logout
                     </Button>
                 </Header>
 
-                <Content style={{ margin: 16 }}>
-                    <div style={{ minHeight: 360 }}>{children}</div>
+                {/* Page content */}
+                <Content style={{ padding: 16, paddingTop: HEADER_HEIGHT + 16 }}>
+                    <div
+                        style={{
+                            minHeight: `calc(100vh - ${HEADER_HEIGHT + 16 + 96}px)`,
+                            background: "#FFFFFF",
+                            borderRadius: 12,
+                            padding: 16,
+                            boxShadow: "0 1px 6px rgba(16,24,40,0.08)",
+                        }}
+                    >
+                        {children || "Content"}
+                    </div>
                 </Content>
 
                 <Footer style={{ textAlign: "center", color: "#6b7280" }}>
-                    ©{new Date().getFullYear()} Khatabook SaaS
+                    ©{new Date().getFullYear()} Vyavhar SaaS
                 </Footer>
             </Layout>
-        </Layout>
+        </div>
     );
-};
-
-export default DashboardLayout;
+}

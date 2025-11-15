@@ -4,7 +4,6 @@ import {
 	Input,
 	Button,
 	Typography,
-	message,
 	Progress,
 	Alert,
 } from 'antd';
@@ -12,6 +11,7 @@ import {
 	PoweroffOutlined,
 	SyncOutlined,
 } from '@ant-design/icons';
+import { useToast } from "../components/ToastProvider";
 
 const { Title, Text } = Typography;
 
@@ -25,6 +25,7 @@ export default function Registration() {
 	const [errorMessage, setErrorMessage] = useState('');
 
 	const password = Form.useWatch('password', form);
+	const message = useToast();
 
 	const getPasswordStrength = (value) => {
 		let score = 0;

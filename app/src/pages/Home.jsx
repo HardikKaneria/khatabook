@@ -1,4 +1,3 @@
 export default function Home() {
-    return <div>Welcome to your Khatabook Dashboard</div>;
-  }
-  
+    return <div>Welcome to your Vyavhar Dashboard</div>;
+}

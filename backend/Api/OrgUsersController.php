@@ -12,6 +12,9 @@ class OrgUsersController
     /** Keep org role choices aligned with your frontend */
     private const ALLOWED_ROLES = ['company_admin', 'c_manager', 'c_employee'];
 
+    /** Cache role table existence checks */
+    private static $rolesTableExists = null;
+
     /** ---------- Auth helpers (cookie OR X-KBS-Token) ---------- */
 
     private static function current_user_id_from_request(WP_REST_Request $request): ?int {
@@ -42,7 +45,73 @@ class OrgUsersController
         return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
     }
 
-    /** Must be admin in WP (manage_options) OR company_admin of that org */
+    private static function roles_table_exists(): bool {
+        if (self::$rolesTableExists !== null) {
+            return self::$rolesTableExists;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'kbs_user_org_roles';
+        self::$rolesTableExists = (bool) $wpdb->get_var( $wpdb->prepare(
+            "SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s",
+            $table
+        ));
+
+        return self::$rolesTableExists;
+    }
+
+    private static function org_role_for_user(int $org_id, int $user_id): ?string {
+        global $wpdb;
+        if (!self::roles_table_exists()) {
+            return null;
+        }
+        $table = $wpdb->prefix . 'kbs_user_org_roles';
+        $role = $wpdb->get_var($wpdb->prepare(
+            "SELECT role FROM {$table} WHERE org_id = %d AND user_id = %d LIMIT 1",
+            $org_id,
+            $user_id
+        ));
+        return $role ?: null;
+    }
+
+    private static function actor_role_for_org(int $org_id): ?string {
+        $uid = get_current_user_id();
+        if (!$uid) {
+            return null;
+        }
+        if (user_can($uid, 'manage_options')) {
+            return 'administrator';
+        }
+        return self::org_role_for_user($org_id, $uid);
+    }
+
+    private static function assignable_roles_for_actor(string $actorRole): array {
+        if ($actorRole === 'administrator') {
+            return self::ALLOWED_ROLES;
+        }
+        if ($actorRole === 'company_admin') {
+            return ['c_manager', 'c_employee'];
+        }
+        if ($actorRole === 'c_manager') {
+            return ['c_employee'];
+        }
+        return [];
+    }
+
+    private static function actor_can_manage_role(string $actorRole, string $targetRole): bool {
+        if ($actorRole === 'administrator') {
+            return true;
+        }
+        if ($actorRole === 'company_admin') {
+            return in_array($targetRole, ['c_manager', 'c_employee'], true);
+        }
+        if ($actorRole === 'c_manager') {
+            return $targetRole === 'c_employee';
+        }
+        return false;
+    }
+
+    /** Must be admin in WP (manage_options) OR company_admin/c_manager of that org */
     public static function can_manage_org(WP_REST_Request $request): bool|WP_Error {
         $ok = self::require_login($request);
         if ($ok instanceof WP_Error) return $ok;
@@ -52,27 +121,10 @@ class OrgUsersController
             return new WP_Error('bad_request', 'Missing org_id.', ['status' => 400]);
         }
 
-        $uid = get_current_user_id();
-        if (user_can($uid, 'manage_options')) return true;
-
-        // Check membership table
-        global $wpdb;
-        $table = $wpdb->prefix . 'kbs_user_org_roles';
-        // If table doesn't exist, deny
-        $exists = $wpdb->get_var( $wpdb->prepare(
-            "SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s",
-            $table
-        ));
-        if (!$exists) {
-            return new WP_Error('forbidden', 'Org membership table missing.', ['status' => 403]);
+        $actorRole = self::actor_role_for_org($org_id);
+        if (in_array($actorRole, ['administrator', 'company_admin', 'c_manager'], true)) {
+            return true;
         }
-
-        $role = $wpdb->get_var($wpdb->prepare(
-            "SELECT role FROM {$table} WHERE user_id = %d AND org_id = %d LIMIT 1",
-            $uid, $org_id
-        ));
-
-        if ($role === 'company_admin') return true;
 
         return new WP_Error('forbidden', 'Insufficient permissions for this organization.', ['status' => 403]);
     }
@@ -174,6 +226,15 @@ class OrgUsersController
         $user->set_role($role);
     }
 
+    private static function get_org_name(int $org_id): ?string {
+        global $wpdb;
+        $table = $wpdb->prefix . 'kbs_organizations';
+        return $wpdb->get_var($wpdb->prepare(
+            "SELECT org_name FROM {$table} WHERE org_id = %d LIMIT 1",
+            $org_id
+        )) ?: null;
+    }
+
     /** Claim invites after a user exists */
     public static function claim_invites_for_user(int $user_id, string $email): void {
         global $wpdb;
@@ -225,12 +286,46 @@ class OrgUsersController
         }
         if (!in_array($role, self::ALLOWED_ROLES, true)) $role = 'c_employee';
 
+        $actorRole = self::actor_role_for_org($org_id);
+        if (!$actorRole) {
+            return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
+        }
+        $assignable = self::assignable_roles_for_actor($actorRole);
+        if (!in_array($role, $assignable, true)) {
+            return new WP_Error('forbidden', 'You cannot invite users with that role.', ['status' => 403]);
+        }
+        $org_name = self::get_org_name($org_id) ?: sprintf('Organization #%d', $org_id);
+
         // If user exists, add membership + set WP role; no "invited" state.
         $user = get_user_by('email', $email);
         if ($user) {
-            self::ensure_membership($org_id, (int)$user->ID, $role);
-            self::set_wp_role((int)$user->ID, $role);
-            return new WP_REST_Response(['status' => 'active', 'user_id' => (int)$user->ID], 200);
+            $user_id = (int) $user->ID;
+            self::ensure_membership($org_id, $user_id, $role);
+            self::set_wp_role($user_id, $role);
+
+            $body = sprintf(
+                "You've been granted access to %s as %s.\nSign in with your email to start collaborating.",
+                $org_name,
+                $role
+            );
+            $subject = sprintf('[%s] Access granted', get_bloginfo('name'));
+            $login_url = home_url('/login');
+            if (function_exists('kbs_send_email')) {
+                \kbs_send_email(
+                    $email,
+                    $subject,
+                    $body,
+                    [
+                        'greeting'  => $user->display_name ? "Hi {$user->display_name}," : 'Hello,',
+                        'cta_label' => 'Open Vyavhar',
+                        'cta_url'   => $login_url,
+                    ]
+                );
+            } else {
+                wp_mail($email, $subject, $body . "\n\n" . $login_url);
+            }
+
+            return new WP_REST_Response(['status' => 'active', 'user_id' => $user_id], 200);
         }
 
         // Else create an invite
@@ -266,11 +361,28 @@ class OrgUsersController
             $invite_id = (int) $wpdb->insert_id;
         }
 
-        // Send simple email (customize link/wording as needed)
+        // Send invitation
         $subject = sprintf('[%s] You have been invited', get_bloginfo('name'));
         $accept_url = add_query_arg(['invite' => $token, 'email' => rawurlencode($email)], home_url('/accept-invite'));
-        $body = "Hi,\n\nYou've been invited to join org #{$org_id}.\nRole: {$role}\n\nAccept: {$accept_url}\n\n";
-        wp_mail($email, $subject, $body);
+        $body = sprintf(
+            "You've been invited to join %s with the role %s.\nUse the button below to accept the invitation. The link expires in 7 days.",
+            $org_name,
+            $role
+        );
+        if (function_exists('kbs_send_email')) {
+            \kbs_send_email(
+                $email,
+                $subject,
+                $body,
+                [
+                    'greeting'  => 'Hello,',
+                    'cta_label' => 'Accept invitation',
+                    'cta_url'   => $accept_url,
+                ]
+            );
+        } else {
+            wp_mail($email, $subject, $body . "\n\n" . $accept_url);
+        }
 
         return new WP_REST_Response(['status' => 'invited', 'invite_id' => $invite_id], 200);
     }
@@ -288,9 +400,27 @@ class OrgUsersController
             return new WP_Error('bad_request', 'org_id, user_id and a valid role are required.', ['status' => 400]);
         }
 
+        $actorRole = self::actor_role_for_org($org_id);
+        if (!$actorRole) {
+            return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
+        }
+
         // Prevent self-demotion
         if ($user_id === get_current_user_id()) {
             return new WP_Error('forbidden', 'You cannot change your own role.', ['status' => 403]);
+        }
+
+        $currentRole = self::org_role_for_user($org_id, $user_id);
+        if (!$currentRole) {
+            return new WP_Error('not_found', 'User is not part of this organization.', ['status' => 404]);
+        }
+        if (!self::actor_can_manage_role($actorRole, $currentRole)) {
+            return new WP_Error('forbidden', 'You cannot manage that user role.', ['status' => 403]);
+        }
+
+        $assignable = self::assignable_roles_for_actor($actorRole);
+        if (!in_array($role, $assignable, true)) {
+            return new WP_Error('forbidden', 'You cannot assign that role.', ['status' => 403]);
         }
 
         // Ensure membership exists and sync role
@@ -307,7 +437,16 @@ class OrgUsersController
 
         $org_id  = absint($request->get_param('org_id'));
         $user_id = $request->get_param('user_id');
+        $actorRole = self::actor_role_for_org($org_id);
+        if (!$actorRole) {
+            return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
+        }
+        $actorRole = self::actor_role_for_org($org_id);
+        if (!$actorRole) {
+            return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
+        }
         $email   = sanitize_email($request->get_param('email'));
+        $org_name = self::get_org_name($org_id) ?: sprintf('Organization #%d', $org_id);
 
         // If user_id is like "invite:123", use that; otherwise try email param
         $invite_id = null;
@@ -324,9 +463,25 @@ class OrgUsersController
                 $invite_id, $org_id
             ));
             if (!$row) return new WP_Error('not_found', 'Invite not found.', ['status' => 404]);
+            if (!self::actor_can_manage_role($actorRole, $row->role ?: 'c_employee')) {
+                return new WP_Error('forbidden', 'You cannot manage that invite.', ['status' => 403]);
+            }
 
             $accept_url = add_query_arg(['invite' => $row->token, 'email' => rawurlencode($row->email)], home_url('/accept-invite'));
-            wp_mail($row->email, '['.get_bloginfo('name').'] Invitation', "Accept invite: {$accept_url}");
+            if (function_exists('kbs_send_email')) {
+                \kbs_send_email(
+                    $row->email,
+                    '['.get_bloginfo('name').'] Invitation reminder',
+                    sprintf('Here is your reminder to join %s.', $org_name),
+                    [
+                        'greeting'  => 'Hello,',
+                        'cta_label' => 'Accept invitation',
+                        'cta_url'   => $accept_url,
+                    ]
+                );
+            } else {
+                wp_mail($row->email, '['.get_bloginfo('name').'] Invitation reminder', "Accept invite: {$accept_url}");
+            }
             return new WP_REST_Response(['resent' => true], 200);
         }
 
@@ -336,9 +491,25 @@ class OrgUsersController
                 $org_id, $email
             ));
             if (!$row) return new WP_Error('not_found', 'Invite not found.', ['status' => 404]);
+            if (!self::actor_can_manage_role($actorRole, $row->role ?: 'c_employee')) {
+                return new WP_Error('forbidden', 'You cannot manage that invite.', ['status' => 403]);
+            }
 
             $accept_url = add_query_arg(['invite' => $row->token, 'email' => rawurlencode($row->email)], home_url('/accept-invite'));
-            wp_mail($row->email, '['.get_bloginfo('name').'] Invitation', "Accept invite: {$accept_url}");
+            if (function_exists('kbs_send_email')) {
+                \kbs_send_email(
+                    $row->email,
+                    '['.get_bloginfo('name').'] Invitation reminder',
+                    sprintf('Here is your reminder to join %s.', $org_name),
+                    [
+                        'greeting'  => 'Hello,',
+                        'cta_label' => 'Accept invitation',
+                        'cta_url'   => $accept_url,
+                    ]
+                );
+            } else {
+                wp_mail($row->email, '['.get_bloginfo('name').'] Invitation reminder', "Accept invite: {$accept_url}");
+            }
             return new WP_REST_Response(['resent' => true], 200);
         }
 
@@ -358,6 +529,17 @@ class OrgUsersController
             $invite_id = absint(substr($user_id, 7));
             global $wpdb;
             $table = $wpdb->prefix . 'kbs_org_invites';
+            $invite = $wpdb->get_row($wpdb->prepare(
+                "SELECT id, role FROM {$table} WHERE id = %d AND org_id = %d",
+                $invite_id,
+                $org_id
+            ));
+            if (!$invite) {
+                return new WP_Error('not_found', 'Invite not found.', ['status' => 404]);
+            }
+            if (!self::actor_can_manage_role($actorRole, $invite->role ?: 'c_employee')) {
+                return new WP_Error('forbidden', 'You cannot remove that invite.', ['status' => 403]);
+            }
             $wpdb->delete($table, ['id' => $invite_id, 'org_id' => $org_id], ['%d','%d']);
             return new WP_REST_Response(['deleted' => true], 200);
         }
@@ -370,6 +552,14 @@ class OrgUsersController
         // Prevent removing yourself
         if ($user_id === get_current_user_id()) {
             return new WP_Error('forbidden', 'You cannot remove yourself.', ['status' => 403]);
+        }
+
+        $currentRole = self::org_role_for_user($org_id, $user_id);
+        if (!$currentRole) {
+            return new WP_Error('not_found', 'User is not part of this organization.', ['status' => 404]);
+        }
+        if (!self::actor_can_manage_role($actorRole, $currentRole)) {
+            return new WP_Error('forbidden', 'You cannot remove that user.', ['status' => 403]);
         }
 
         global $wpdb;

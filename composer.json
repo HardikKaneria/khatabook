@@ -1,6 +1,6 @@
 {
   "name": "you/khatabook-saas",
-  "description": "Headless SaaS plugin for Khatabook-style invoicing system",
+  "description": "Headless SaaS plugin for the Vyavhar invoicing system",
   "type": "wordpress-plugin",
   "autoload": {
     "psr-4": {

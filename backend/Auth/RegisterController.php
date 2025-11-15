@@ -129,6 +129,21 @@ class RegisterController
             SystemLogger::log_registration($email, 'User submitted registration and passed OTP.');
         }
 
+        if (function_exists('kbs_send_email')) {
+            $cta = home_url('/login');
+            $body = "Thanks for registering {$company} with Vyavhar. Our team will review your application shortly. We'll notify you as soon as an admin approves your account.";
+            \kbs_send_email(
+                $email,
+                'Registration received – waiting for approval',
+                $body,
+                [
+                    'greeting'  => "Hi {$name},",
+                    'cta_label' => 'Check status',
+                    'cta_url'   => $cta,
+                ]
+            );
+        }
+
         return new WP_REST_Response([
             'message' => 'Registration submitted successfully. Awaiting admin approval.'
         ], 200);

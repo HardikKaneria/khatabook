@@ -74,6 +74,17 @@ class PendingUserController {
                 SystemLogger::log_registration( $email, 'User declined' );
             }
 
+            if ( function_exists( 'kbs_send_email' ) ) {
+                \kbs_send_email(
+                    $email,
+                    'Your Vyavhar registration status',
+                    'We reviewed your application and unfortunately had to decline it at this time. If you believe this was a mistake, please reply to this email with additional details.',
+                    [
+                        'greeting' => $name ? "Hi {$name}," : 'Hello,',
+                    ]
+                );
+            }
+
             self::admin_notice( "User {$email} declined.", 'warning' );
             return;
         }
@@ -138,7 +149,7 @@ class PendingUserController {
                 $org_id = 0;
                 if ( $company !== '' ) {
                     $org_id = (int) $wpdb->get_var(
-                        $wpdb->prepare( "SELECT id FROM {$table_orgs} WHERE org_name = %s LIMIT 1", $company )
+                        $wpdb->prepare( "SELECT org_id FROM {$table_orgs} WHERE org_name = %s LIMIT 1", $company )
                     );
 
                     if ( ! $org_id ) {
@@ -201,6 +212,19 @@ class PendingUserController {
 
                 if ( class_exists( SystemLogger::class ) ) {
                     SystemLogger::log_registration( $email, 'User approved and account created' );
+                }
+
+                if ( function_exists( 'kbs_send_email' ) ) {
+                    \kbs_send_email(
+                        $email,
+                        'Your Vyavhar account is ready',
+                        'Great news! Your organization has been approved and your Vyavhar account is live. Sign in with your registered email to start using the dashboard.',
+                        [
+                            'greeting'  => $name ? "Hi {$name}," : 'Hello,',
+                            'cta_label' => 'Open Vyavhar',
+                            'cta_url'   => home_url('/login'),
+                        ]
+                    );
                 }
 
                 self::admin_notice( "User {$email} approved successfully.", 'success' );

@@ -5,45 +5,61 @@
 
 /* 2) Design Tokens */
 :root {
-  /* Brand Palette */
-  --kb-color-primary: #6c5ce7; /* Royal Violet */
-  --kb-color-primary-600: #5a4bd4; /* Hover */
-  --kb-color-primary-700: #4b3fc0; /* Active */
+  /* --------------------------------------------------
+     BRAND PALETTE (Futuristic Violet + Magenta)
+  -------------------------------------------------- */
+  --kb-color-primary: #6c5ce7;       /* Royal Violet */
+  --kb-color-primary-600: #5a4bd4;   /* Hover State */
+  --kb-color-primary-700: #4b3fc0;   /* Active State */
 
-  --kb-color-accent: #e84393; /* Magenta Pink */
-  --kb-color-accent-600: #d23682;
+  --kb-color-accent: #e84393;        /* Magenta Pink */
+  --kb-color-accent-600: #d23682;    /* Darker Magenta for Hover */
 
-  --kb-color-black: #121212; /* Deep Black */
-  --kb-color-gray: #b2bec3; /* Silver Gray */
-  --kb-color-gray-700: #646e73;
-  --kb-color-gray-100: #f2f4f5;
+  /* NEW: Futuristic Glow Colors */
+  --kb-color-glow-violet: rgba(108, 92, 231, 0.22);
+  --kb-color-glow-pink: rgba(232, 67, 147, 0.18);
 
-  --kb-color-bg: #fdfdfd; /* Ivory White */
-  --kb-color-white: #ffffff;
-  --kb-color-border: #e8eaed;
+  /* --------------------------------------------------
+     NEUTRALS
+  -------------------------------------------------- */
+  --kb-color-black: #111111;         /* Deep Black (slightly softer) */
+  --kb-color-gray: #b2bec3;          /* Silver Gray */
+  --kb-color-gray-700: #676f75;      /* Softer contrast gray */
+  --kb-color-gray-100: #f3f5f7;      /* Neutral off-white */
 
-  /* Feedback (keep non-blue) */
+  /* NEW: Futuristic Neutral Additions */
+  --kb-color-slate: #1e1e2e;         /* Dark mode background */
+  --kb-color-surface: #ffffff;       /* Main surfaces */
+  --kb-color-surface-alt: #fafbff;   /* Light alt surfaces */
+
+  --kb-color-bg: #faf9fb;            /* Ivory-White-Tinted */
+  --kb-color-white: #ffffff;         /* Pure white */
+  --kb-color-border: #e5e7eb;        /* Softer clean border */
+
+  /* --------------------------------------------------
+     FEEDBACK COLORS
+     (Adjusted for consistency with primary palette)
+  -------------------------------------------------- */
   --kb-color-success: #2ecc71;
   --kb-color-warning: #f39c12;
-  --kb-color-error: #e11d48;
+  --kb-color-error: #ef3058;       /* Slightly stronger than before */
 
-  /* Shadows & Radii */
-  --kb-radius-sm: 8px;
-  --kb-radius-md: 12px;
-  --kb-radius-lg: 16px;
-  --kb-shadow-sm: 0 2px 8px rgba(18, 18, 18, 0.06);
-  --kb-shadow-md: 0 8px 24px rgba(18, 18, 18, 0.08);
+  /* --------------------------------------------------
+     TYPOGRAPHY (Futuristic clean setup)
+  -------------------------------------------------- */
+  --kb-font-head: "Urbanist", "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --kb-font-body: "Lato", "Inter", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
 
-  /* Typography */
-  --kb-font-head: "Urbanist", system-ui, -apple-system, Segoe UI, Roboto,
-    sans-serif;
-  --kb-font-body: "Lato", system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  /* NEW: Optional Futuristic Heading Font */
+  --kb-font-mono: "JetBrains Mono", monospace;
 
-  --kb-text-title: var(--kb-color-black);
-  --kb-text-body: #2b2b2b;
-  --kb-text-muted: var(--kb-color-gray-700);
+  --kb-text-title: #111111;
+  --kb-text-body: #2c2c2c;
+  --kb-text-muted: #7a7f85;
 
-  /* Sizing & spacing */
+  /* --------------------------------------------------
+     SPACING SYSTEM
+  -------------------------------------------------- */
   --kb-space-1: 4px;
   --kb-space-2: 8px;
   --kb-space-3: 12px;
@@ -51,8 +67,23 @@
   --kb-space-5: 20px;
   --kb-space-6: 24px;
   --kb-space-8: 32px;
+  --kb-space-10: 40px;    /* NEW: large spacing for sections */
+  --kb-space-12: 48px;    /* NEW */
 
-  /* Focus ring */
+  /* --------------------------------------------------
+     RADII & SHADOWS
+  -------------------------------------------------- */
+  --kb-radius-sm: 8px;
+  --kb-radius-md: 12px;
+  --kb-radius-lg: 20px;          /* More modern rounded cards */
+
+  --kb-shadow-sm: 0 2px 8px rgba(17, 17, 17, 0.06);
+  --kb-shadow-md: 0 10px 25px rgba(17, 17, 17, 0.08);
+  --kb-shadow-glow: 0 0 25px var(--kb-color-glow-violet);
+
+  /* --------------------------------------------------
+     FOCUS RING
+  -------------------------------------------------- */
   --kb-focus: 0 0 0 3px rgba(108, 92, 231, 0.35);
 }
 
@@ -337,4 +368,130 @@ button {
 
 :where(.css-1ajrvj4).ant-layout-sider .ant-layout-sider-zero-width-trigger {
   inset-inline-end: auto;
+}
+
+/* Toast notifications */
+.kb-toast-stack {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 2000;
+  pointer-events: none;
+}
+
+.kb-toast {
+  pointer-events: auto;
+  min-width: 320px;
+  max-width: 380px;
+  display: flex;
+  align-items: stretch;
+  background: var(--kb-color-white);
+  border-radius: var(--kb-radius-lg);
+  border: 1px solid rgba(18, 18, 18, 0.08);
+  box-shadow: 0 18px 40px rgba(18, 18, 18, 0.12);
+  overflow: hidden;
+  backdrop-filter: blur(12px);
+  animation: kb-toast-in 200ms ease-out;
+}
+
+.kb-toast__status {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 56px;
+  background: var(--kb-color-primary);
+  color: var(--kb-color-white);
+}
+
+.kb-toast__body {
+  flex: 1;
+  padding: 14px 16px;
+}
+
+.kb-toast__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: var(--kb-font-head);
+  color: var(--kb-text-title);
+}
+
+.kb-toast__message {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: var(--kb-text-body);
+  line-height: 1.45;
+}
+
+.kb-toast__action {
+  margin-top: 10px;
+  background: transparent;
+  border: none;
+  color: var(--kb-color-primary);
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.kb-toast__action:hover {
+  color: var(--kb-color-primary-600);
+}
+
+.kb-toast__close {
+  background: transparent;
+  border: none;
+  color: var(--kb-color-gray-700);
+  font-size: 20px;
+  padding: 0 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+
+.kb-toast__close:hover {
+  color: var(--kb-color-black);
+}
+
+.kb-toast--success .kb-toast__status {
+  background: linear-gradient(135deg, var(--kb-color-success), #44d686);
+}
+
+.kb-toast--error .kb-toast__status {
+  background: linear-gradient(135deg, var(--kb-color-error), #ff3b6c);
+}
+
+.kb-toast--warning .kb-toast__status {
+  background: linear-gradient(135deg, var(--kb-color-warning), #ffba49);
+}
+
+.kb-toast--info .kb-toast__status {
+  background: linear-gradient(135deg, var(--kb-color-primary), var(--kb-color-accent));
+}
+
+@keyframes kb-toast-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -10px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@media (max-width: 640px) {
+  .kb-toast-stack {
+    left: 16px;
+    right: 16px;
+    top: auto;
+    bottom: 24px;
+  }
+
+  .kb-toast {
+    width: 100%;
+    min-width: auto;
+  }
 }
