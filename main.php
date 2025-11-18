@@ -9,8 +9,13 @@ defined('ABSPATH') || exit;
 
 define('KHATABOOK_PLUGIN_FILE', __FILE__);
 
-// Load Composer Autoloader
+// Load Composer Autoloader + non-autoloaded helpers
 require_once __DIR__ . '/vendor/autoload.php';
+require_once __DIR__ . '/backend/Helpers/OrgHelper.php';
+require_once __DIR__ . '/backend/Helpers/ReportHelper.php';
+require_once __DIR__ . '/backend/Helpers/InvoiceTemplateHelper.php';
+require_once __DIR__ . '/backend/Helpers/InvoiceEmailHelper.php';
+require_once __DIR__ . '/backend/Invoices/VyInvoicePdf.php';
 
 // Initialize the plugin
 $plugin = new \KBS\Core\Plugin(KHATABOOK_PLUGIN_FILE);
@@ -37,7 +42,7 @@ function kbs_render_email_body(string $message, array $args = []): string {
     $body .= wpautop(esc_html($message));
     if ($ctaLabel && $ctaUrl) {
         $body .= sprintf(
-            '<p style="margin:24px 0;"><a href="%s" style="display:inline-block;background:#6c5ce7;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:600;">%s</a></p>',
+            '<p style="margin:24px 0;"><a href="%s" style="display:inline-block;background:#4C2CE9;color:#ffffff;text-decoration:none;padding:12px 20px;border-radius:999px;font-weight:600;">%s</a></p>',
             esc_url($ctaUrl),
             esc_html($ctaLabel)
         );

@@ -98,7 +98,8 @@ class OrgUsersController
         return [];
     }
 
-    private static function actor_can_manage_role(string $actorRole, string $targetRole): bool {
+    private static function actor_can_manage_role(?string $actorRole, string $targetRole): bool {
+        $actorRole = $actorRole ?: '';
         if ($actorRole === 'administrator') {
             return true;
         }

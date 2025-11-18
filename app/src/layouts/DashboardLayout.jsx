@@ -14,6 +14,8 @@ import {
     TeamOutlined,
     FileOutlined,
     SettingOutlined,
+    DollarCircleOutlined,
+    BarChartOutlined,
 } from "@ant-design/icons";
 import logo from "../assets/logo.svg";
 import logoCompact from "../assets/V_logo.svg";
@@ -66,10 +68,13 @@ export default function ResponsiveShell({ children, user }) {
             { key: "home", icon: <HomeOutlined />, label: "Home", href: "/home" },
             { key: "accounts", icon: <TeamOutlined />, label: "Accounts", href: "/accounts" },
             { key: "invoices", icon: <FileOutlined />, label: "Invoices", href: "/invoices" },
+            { key: "expenses", icon: <DollarCircleOutlined />, label: "Expenses", href: "/expenses" },
+            { key: "reports", icon: <BarChartOutlined />, label: "Profit & Tax", href: "/reports" },
         ];
         if (role === "company_admin") {
             base.push(
                 { key: "company-settings", icon: <SettingOutlined />, label: "Company Settings", href: "/company-settings" },
+                { key: "settings", icon: <FileOutlined />, label: "Invoice Settings", href: "/settings/invoices" },
                 { key: "users", icon: <TeamOutlined />, label: "Users", href: "/users" },
             );
         }

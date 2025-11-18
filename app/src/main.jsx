@@ -10,12 +10,12 @@ import { FontSizeOutlined } from "@ant-design/icons";
 const violetTheme = {
     token: {
         // brand
-        colorPrimary: "#6C5CE7",
+        colorPrimary: "#4C2CE9",
         colorPrimaryHover: "#5A4BD4",
         colorPrimaryActive: "#4B3FC0",
 
         // link buttons & <a>
-        colorLink: "#6C5CE7",
+        colorLink: "#4C2CE9",
         colorLinkHover: "#5A4BD4",
         colorLinkActive: "#4B3FC0",
 
@@ -26,7 +26,7 @@ const violetTheme = {
         fontFamily: "'Urbanist', 'Lato', system-ui, sans-serif",
 
         // (optional) some components use info color for “primary-like” UI
-        colorInfo: "#6C5CE7",
+        colorInfo: "#4C2CE9",
 
         fontSize: 16,   // ⬅️ all component base text = 16px
         lineHeight: 1.5, // ⬅️ default text line-height

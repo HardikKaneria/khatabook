@@ -36,6 +36,8 @@ class Plugin
         add_action('admin_init', [PendingUserController::class, 'handle_actions']);
         add_action('after_setup_theme', [AdminAccess::class, 'hide_admin_bar']);
         add_filter('login_redirect', [AdminAccess::class, 'redirect_after_login'], 10, 3);
+
+        TableManager::maybe_upgrade();
         
     }
 }

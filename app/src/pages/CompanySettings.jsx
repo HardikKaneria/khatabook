@@ -45,6 +45,7 @@ const DEFAULTS = {
         padding: 4,
         reset_cycle: "yearly",
         default_terms: "Net 7",
+        default_due_days: 7,
         round_off: 1,
     },
     tax: {
@@ -604,6 +605,11 @@ function SalesSection({ value, onChange, onSave, saving, loading, disabled }) {
                         <Col xs={24} md={12}>
                             <Form.Item label="Default Terms" name="default_terms">
                                 <Select options={[{ value: "Net 7" }, { value: "Net 15" }, { value: "Net 30" }]} />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item label="Default Due Days" name="default_due_days">
+                                <InputNumber min={0} style={{ width: "100%" }} />
                             </Form.Item>
                         </Col>
                         <Col xs={24} md={12}>

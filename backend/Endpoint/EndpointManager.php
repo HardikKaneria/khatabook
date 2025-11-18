@@ -12,6 +12,12 @@ use KBS\Auth\RegisterController;
 use KBS\Admin\PendingUserController;
 use KBS\Api\SettingsController;
 use KBS\Api\OrgUsersController;
+use KBS\Api\VyRestAccounts;
+use KBS\Api\VyRestExpenses;
+use KBS\Api\VyRestInvoices;
+use KBS\Api\VyRestContacts;
+use KBS\Api\VyRestReports;
+use KBS\Api\VyRestInvoiceSettings;
 
 defined('ABSPATH') || exit;
 
@@ -170,6 +176,14 @@ class EndpointManager
                 'user_id' => ['type' => 'string',  'required' => true], // supports numeric or "invite:123"
             ],
         ]);
+
+        // Module REST routes
+        VyRestAccounts::register_routes();
+        VyRestInvoices::register_routes();
+        VyRestExpenses::register_routes();
+        VyRestContacts::register_routes();
+        VyRestReports::register_routes();
+        VyRestInvoiceSettings::register_routes();
     }
 
     /* ===== Helpers / permission callbacks ===== */

@@ -8,9 +8,9 @@
   /* --------------------------------------------------
      BRAND PALETTE (Futuristic Violet + Magenta)
   -------------------------------------------------- */
-  --kb-color-primary: #6c5ce7;       /* Royal Violet */
-  --kb-color-primary-600: #5a4bd4;   /* Hover State */
-  --kb-color-primary-700: #4b3fc0;   /* Active State */
+  --kb-color-primary: #4C2CE9;       /* Royal Violet */
+  --kb-color-primary-600: #4C2CE9;   /* Hover State */
+  --kb-color-primary-700: #4C2CE9;   /* Active State */
 
   --kb-color-accent: #e84393;        /* Magenta Pink */
   --kb-color-accent-600: #d23682;    /* Darker Magenta for Hover */
@@ -258,6 +258,84 @@ body {
 }
 
 /* ===== Fix WebKit autofill (Chrome/Edge/Safari) background ===== */
+
+/* Contact picker */
+.kb-contact-picker {
+  position: relative;
+}
+.kb-contact-picker__dropdown {
+  position: absolute;
+  z-index: 20;
+  inset-inline-start: 0;
+  top: calc(100% + 4px);
+  width: 100%;
+  background: var(--kb-color-white);
+  border: 1px solid var(--kb-color-border);
+  border-radius: var(--kb-radius-sm);
+  box-shadow: var(--kb-shadow-sm);
+  display: flex;
+  flex-direction: column;
+  max-height: 220px;
+  overflow: auto;
+}
+.kb-contact-picker__option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 10px 12px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--kb-font-body);
+}
+.kb-contact-picker__option:hover {
+  background: #f7f4ff;
+}
+.kb-contact-picker__option-name {
+  font-weight: 600;
+  color: var(--kb-color-black);
+}
+.kb-contact-picker__option-meta {
+  font-size: 12px;
+  color: var(--kb-text-muted);
+}
+
+.kb-grid-cards,
+.kb-grid-2,
+.kb-grid-3 {
+  display: grid;
+  gap: var(--kb-space-4);
+}
+
+.kb-grid-cards {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.kb-grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.kb-grid-3 {
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+.kb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.kb-table th,
+.kb-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--kb-color-border);
+}
+.kb-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--kb-text-muted);
+}
 .ant-input,
 .ant-input-affix-wrapper input {
   background-clip: padding-box; /* keeps our inset shadow clean */
@@ -278,7 +356,7 @@ body {
   -webkit-text-fill-color: #121212;
   box-shadow: 0 0 0 1000px #ffffff inset !important,
     /* keep white bg */ 0 0 0 3px rgba(108, 92, 231, 0.35); /* Violet focus ring */
-  border-color: #6c5ce7 !important; /* Violet border on focus */
+  border-color: #4C2CE9 !important; /* Violet border on focus */
 }
 
 /* Optional: when you place inputs on a dark surface */
@@ -309,7 +387,7 @@ body {
 }
 
 .ant-menu-light .ant-menu-item-selected .anticon {
-  color: #6c5ce7 !important; /* icon accent */
+  color: #4C2CE9 !important; /* icon accent */
 }
 
 .ant-menu-light .ant-menu-submenu-title:hover {
@@ -352,12 +430,12 @@ button {
   > .ant-menu
   .ant-menu-item-selected
   a:hover {
-  color: #6c5ce7 !important;
+  color: #4C2CE9 !important;
   font-weight: 700 !important;
 }
 
 .ant-menu-light .ant-menu-item-selected:hover {
-  background: #6c5ce7 !important;
+  background: #4C2CE9 !important;
   color: #ffffff !important;
 }
 

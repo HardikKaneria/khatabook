@@ -69,7 +69,7 @@ class EmailManager {
 
         if ($ctaLabel && $ctaUrl) {
             $body .= sprintf(
-                '<p style="margin:30px 0 10px;"><a href="%s" style="display:inline-block;background:#6c5ce7;color:#ffffff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:600;box-shadow:0 12px 24px rgba(108,92,231,0.25);">%s</a></p>',
+                '<p style="margin:30px 0 10px;"><a href="%s" style="display:inline-block;background:#4C2CE9;color:#ffffff;text-decoration:none;padding:14px 26px;border-radius:999px;font-weight:600;box-shadow:0 12px 24px rgba(108,92,231,0.25);">%s</a></p>',
                 esc_url($ctaUrl),
                 esc_html($ctaLabel)
             );
@@ -77,7 +77,7 @@ class EmailManager {
 
         $body .= '<hr style="margin:32px 0;border:none;border-top:1px solid rgba(15,23,42,0.08);" />';
         $body .= '<p style="color:#6b7280;font-size:13px;margin:0 0 6px;">' . wp_kses_post($footer) . '</p>';
-        $body .= '<a href="' . esc_url($site_url) . '" style="color:#6c5ce7;font-size:13px;text-decoration:none;">' . esc_html(parse_url($site_url, PHP_URL_HOST) ?? $site_url) . '</a>';
+        $body .= '<a href="' . esc_url($site_url) . '" style="color:#4C2CE9;font-size:13px;text-decoration:none;">' . esc_html(parse_url($site_url, PHP_URL_HOST) ?? $site_url) . '</a>';
         $body .= '</div></div>';
 
         return $body;
