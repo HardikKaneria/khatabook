@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { Input, Select, Switch } from "antd";
 import { useToast } from "../../../components/ToastProvider";
 import { getInvoiceSettings, saveInvoiceSettings } from "./invoiceSettingsApi";
+import InvoiceTemplatePreview from "./InvoiceTemplatePreview.jsx";
 
 const PLACEHOLDER_HINT =
     "{{org_name}}, {{invoice_number}}, {{invoice_total}}, {{invoice_date}}, {{customer_name}}";
@@ -34,9 +36,10 @@ export default function InvoiceSettingsPage() {
         };
     }, [toast]);
 
-    const selectedTemplate = useMemo(() => {
-        return templates.find((tpl) => tpl.id === settings?.default_template_id) || null;
-    }, [templates, settings?.default_template_id]);
+    const selectedTemplate = useMemo(
+        () => templates.find((tpl) => tpl.id === settings?.default_template_id) || null,
+        [templates, settings?.default_template_id]
+    );
 
     const updateField = (key, value) => {
         setSettings((prev) => ({
@@ -49,8 +52,12 @@ export default function InvoiceSettingsPage() {
         updateField(key, event.target.value);
     };
 
-    const handleCheckboxChange = (key) => (event) => {
-        updateField(key, event.target.checked ? 1 : 0);
+    const handleSelectChange = (key) => (value) => {
+        updateField(key, value);
+    };
+
+    const handleSwitchChange = (key) => (checked) => {
+        updateField(key, checked ? 1 : 0);
     };
 
     const handleSave = async () => {
@@ -85,254 +92,190 @@ export default function InvoiceSettingsPage() {
     }
 
     return (
-        <div className="space-y-4">
-            <header className="flex items-center justify-between" style={{ gap: 16 }}>
+        <div className="invoice-settings-page">
+            <header className="invoice-settings-header">
                 <div>
-                    <h1 className="kb-h2" style={{ marginBottom: 4 }}>
-                        Invoice Template &amp; Email
-                    </h1>
-                    <p className="kb-muted" style={{ margin: 0 }}>
+                    <p className="invoice-settings-eyebrow">Brand &amp; Email</p>
+                    <h1>Invoice Template &amp; Email</h1>
+                    <p className="invoice-settings-subtitle">
                         Brand your invoices and control outgoing email copy.
                     </p>
                 </div>
-                <button
-                    className="kb-btn kb-btn--primary"
-                    onClick={handleSave}
-                    disabled={saving}
-                >
-                    {saving ? "Saving…" : "Save"}
+                <button className="invoice-settings-save" onClick={handleSave} disabled={saving}>
+                    {saving ? "Saving…" : "Save Changes"}
                 </button>
             </header>
 
-            <div className="kb-card" style={{ padding: 24, display: "grid", gap: 24 }}>
-                <section style={{ display: "grid", gap: 12 }}>
-                    <h2 className="kb-h3" style={{ margin: 0 }}>
-                        Template
-                    </h2>
-                    <div className="kb-field">
-                        <label className="kb-label" htmlFor="template-select">
-                            Default Template
-                        </label>
-                        <select
-                            id="template-select"
-                            className="kb-input"
-                            value={settings.default_template_id || ""}
-                            onChange={handleInputChange("default_template_id")}
-                        >
-                            {templates.map((tpl) => (
-                                <option key={tpl.id} value={tpl.id}>
-                                    {tpl.name}
-                                </option>
-                            ))}
-                        </select>
-                        {selectedTemplate?.description ? (
-                            <p className="kb-muted" style={{ marginTop: 4 }}>
-                                {selectedTemplate.description}
-                            </p>
-                        ) : null}
-                    </div>
+            <div className="invoice-settings-grid">
+                <div className="invoice-settings-form">
+                    <section className="invoice-settings-card">
+                        <SectionTitle title="Template" description="Choose visuals for your invoice PDF." />
+                        <div className="field">
+                            <label htmlFor="template-select">Default Template</label>
+                            <Select
+                                id="template-select"
+                                value={settings.default_template_id || ""}
+                                onChange={handleSelectChange("default_template_id")}
+                                options={templates.map((tpl) => ({ value: tpl.id, label: tpl.name }))}
+                            />
+                            {selectedTemplate?.description ? (
+                                <p className="field-hint">{selectedTemplate.description}</p>
+                            ) : null}
+                        </div>
 
-                    <div className="kb-field">
-                        <label className="kb-label" htmlFor="logo-url">
-                            Logo URL
-                        </label>
-                        <input
-                            id="logo-url"
-                            type="text"
-                            className="kb-input"
-                            placeholder="https://example.com/logo.png"
-                            value={settings.logo_url || ""}
-                            onChange={handleInputChange("logo_url")}
-                        />
-                    </div>
+                        <div className="field">
+                            <label htmlFor="logo-url">Logo URL</label>
+                            <Input
+                                id="logo-url"
+                                placeholder="https://example.com/logo.png"
+                                value={settings.logo_url || ""}
+                                onChange={handleInputChange("logo_url")}
+                            />
+                        </div>
 
-                    <div className="grid" style={{ gap: 16, gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
-                        <div className="kb-field">
-                            <label className="kb-label" htmlFor="primary-color">
-                                Primary Color
-                            </label>
-                            <input
+                        <div className="field-row">
+                        <div className="field">
+                            <label htmlFor="primary-color">Primary Color</label>
+                            <Input
                                 id="primary-color"
-                                type="text"
-                                className="kb-input"
-                                placeholder="#1f2937"
+                                placeholder="#6c5ce7"
                                 value={settings.primary_color || ""}
                                 onChange={handleInputChange("primary_color")}
                             />
                         </div>
-                        <div className="kb-field">
-                            <label className="kb-label" htmlFor="accent-color">
-                                Accent Color
-                            </label>
-                            <input
+                        <div className="field">
+                            <label htmlFor="accent-color">Accent Color</label>
+                            <Input
                                 id="accent-color"
-                                type="text"
-                                className="kb-input"
-                                placeholder="#6c5ce7"
+                                placeholder="#e84393"
                                 value={settings.accent_color || ""}
                                 onChange={handleInputChange("accent_color")}
                             />
                         </div>
-                        <div className="kb-field">
-                            <label className="kb-label" htmlFor="font-family">
-                                Font Family
-                            </label>
-                            <input
+                        <div className="field">
+                            <label htmlFor="font-family">Font Family</label>
+                            <Input
                                 id="font-family"
-                                type="text"
-                                className="kb-input"
                                 placeholder="Inter, Helvetica, sans-serif"
                                 value={settings.font_family || ""}
                                 onChange={handleInputChange("font_family")}
                             />
                         </div>
-                    </div>
-                </section>
+                        </div>
+                    </section>
 
-                <section style={{ display: "grid", gap: 16 }}>
-                    <h2 className="kb-h3" style={{ margin: 0 }}>
-                        Document Blocks
-                    </h2>
-                    <TextareaField
-                        label="Footer Text"
-                        value={settings.footer_text || ""}
-                        onChange={handleInputChange("footer_text")}
-                        placeholder="Thanks for your business."
-                    />
-                    <TextareaField
-                        label="Terms & Conditions"
-                        value={settings.terms_and_conditions || ""}
-                        onChange={handleInputChange("terms_and_conditions")}
-                        placeholder="Payment is due within 7 days."
-                    />
-                    <TextareaField
-                        label="Bank Details"
-                        value={settings.bank_details || ""}
-                        onChange={handleInputChange("bank_details")}
-                        placeholder="Account Name, Number, IFSC…"
-                    />
-                </section>
+                    <section className="invoice-settings-card">
+                        <SectionTitle title="Document Blocks" description="Content that appears on every invoice." />
+                        <div className="field">
+                            <label>Footer Text</label>
+                            <Input.TextArea
+                                rows={4}
+                                value={settings.footer_text || ""}
+                                onChange={handleInputChange("footer_text")}
+                                placeholder="Thanks for your business."
+                            />
+                        </div>
+                        <div className="field">
+                            <label>Terms & Conditions</label>
+                            <Input.TextArea
+                                rows={4}
+                                value={settings.terms_and_conditions || ""}
+                                onChange={handleInputChange("terms_and_conditions")}
+                                placeholder="Payment is due within 7 days."
+                            />
+                        </div>
+                        <div className="field">
+                            <label>Bank Details</label>
+                            <Input.TextArea
+                                rows={4}
+                                value={settings.bank_details || ""}
+                                onChange={handleInputChange("bank_details")}
+                                placeholder="Account Name, Number, IFSC…"
+                            />
+                        </div>
+                    </section>
 
-                <section style={{ display: "grid", gap: 16 }}>
-                    <h2 className="kb-h3" style={{ margin: 0 }}>
-                        Display Options
-                    </h2>
-                    <ToggleField
-                        id="show-tax"
-                        label="Show tax breakup on invoice"
-                        checked={!!settings.show_tax_breakup}
-                        onChange={handleCheckboxChange("show_tax_breakup")}
-                    />
-                    <ToggleField
-                        id="show-qr"
-                        label="Show QR code placeholder"
-                        checked={!!settings.show_qr_code}
-                        onChange={handleCheckboxChange("show_qr_code")}
-                    />
-                    <ToggleField
-                        id="auto-email"
-                        label="Auto-email invoice after creation"
-                        checked={!!settings.auto_email_on_create}
-                        onChange={handleCheckboxChange("auto_email_on_create")}
-                    />
-                </section>
-
-                <section style={{ display: "grid", gap: 16 }}>
-                    <h2 className="kb-h3" style={{ margin: 0 }}>
-                        Email Template
-                    </h2>
-                    <div className="kb-field">
-                        <label className="kb-label" htmlFor="email-subject">
-                            Subject
-                        </label>
-                        <input
-                            id="email-subject"
-                            type="text"
-                            className="kb-input"
-                            placeholder="Invoice {{invoice_number}} from {{org_name}}"
-                            value={settings.email_subject_template || ""}
-                            onChange={handleInputChange("email_subject_template")}
+                    <section className="invoice-settings-card">
+                        <SectionTitle title="Display Options" description="Toggle optional sections on your invoice." />
+                        <ToggleField
+                            id="show-tax"
+                            label="Show tax breakup on invoice"
+                            checked={!!settings.show_tax_breakup}
+                            onChange={handleSwitchChange("show_tax_breakup")}
                         />
-                    </div>
-                    <TextareaField
-                        label="Body"
-                        id="email-body"
-                        value={settings.email_body_template || ""}
-                        onChange={handleInputChange("email_body_template")}
-                        placeholder="Dear {{customer_name}}, ..."
-                        helperText={`Placeholders: ${PLACEHOLDER_HINT}`}
-                    />
-                    <p className="kb-muted" style={{ margin: 0 }}>
-                        Supported placeholders: {PLACEHOLDER_HINT}
-                    </p>
-                </section>
+                        <ToggleField
+                            id="show-qr"
+                            label="Show QR code placeholder"
+                            checked={!!settings.show_qr_code}
+                            onChange={handleSwitchChange("show_qr_code")}
+                        />
+                        <ToggleField
+                            id="auto-email"
+                            label="Auto-email invoice after creation"
+                            checked={!!settings.auto_email_on_create}
+                            onChange={handleSwitchChange("auto_email_on_create")}
+                        />
+                    </section>
 
-                <div className="flex items-center justify-end" style={{ gap: 12 }}>
-                    <button
-                        className="kb-btn kb-btn--secondary"
-                        type="button"
-                        onClick={() => window.history.back()}
-                        style={{ minWidth: 120 }}
-                    >
-                        Cancel
-                    </button>
-                    <button
-                        className="kb-btn kb-btn--primary"
-                        type="button"
-                        onClick={handleSave}
-                        disabled={saving}
-                        style={{ minWidth: 120 }}
-                    >
-                        {saving ? "Saving…" : "Save changes"}
-                    </button>
+                    <section className="invoice-settings-card">
+                        <SectionTitle title="Email Template" description="Customize the email sent with invoices." />
+                        <div className="field">
+                            <label htmlFor="email-subject">Subject</label>
+                            <Input
+                                id="email-subject"
+                                placeholder="Invoice {{invoice_number}} from {{org_name}}"
+                                value={settings.email_subject_template || ""}
+                                onChange={handleInputChange("email_subject_template")}
+                            />
+                        </div>
+                        <div className="field">
+                            <label htmlFor="email-body">Body</label>
+                            <Input.TextArea
+                                id="email-body"
+                                rows={4}
+                                value={settings.email_body_template || ""}
+                                onChange={handleInputChange("email_body_template")}
+                                placeholder="Dear {{customer_name}}, ..."
+                            />
+                            <p className="field-hint">Supported placeholders: {PLACEHOLDER_HINT}</p>
+                        </div>
+                    </section>
+
+                    <div className="form-footer">
+                        <button type="button" className="ghost-btn" onClick={() => window.history.back()}>
+                            Cancel
+                        </button>
+                        <button type="button" className="invoice-settings-save" onClick={handleSave} disabled={saving}>
+                            {saving ? "Saving…" : "Save Changes"}
+                        </button>
+                    </div>
                 </div>
+
+                <InvoiceTemplatePreview
+                    selectedTemplateId={settings.default_template_id}
+                    templateName={selectedTemplate?.name}
+                    primaryColor={settings.primary_color}
+                    accentColor={settings.accent_color}
+                    logoUrl={settings.logo_url}
+                />
             </div>
         </div>
     );
 }
 
-function TextareaField({ label, value, onChange, placeholder, id, helperText }) {
-    const textId = id || label?.toLowerCase().replace(/\s+/g, "-");
+function SectionTitle({ title, description }) {
     return (
-        <div className="kb-field">
-            <label className="kb-label" htmlFor={textId}>
-                {label}
-            </label>
-            <textarea
-                id={textId}
-                className="kb-textarea"
-                rows={4}
-                value={value}
-                onChange={onChange}
-                placeholder={placeholder}
-            />
-            {helperText ? (
-                <p className="kb-muted" style={{ marginTop: 4 }}>
-                    {helperText}
-                </p>
-            ) : null}
+        <div className="section-title">
+            <h2>{title}</h2>
+            {description ? <p>{description}</p> : null}
         </div>
     );
 }
 
 function ToggleField({ id, label, checked, onChange }) {
     return (
-        <label
-            htmlFor={id}
-            style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                cursor: "pointer",
-            }}
-        >
-            <input
-                id={id}
-                type="checkbox"
-                checked={checked}
-                onChange={onChange}
-                style={{ width: 18, height: 18 }}
-            />
+        <label className="toggle-field" htmlFor={id}>
+            <Switch id={id} checked={checked} onChange={onChange} />
             <span>{label}</span>
         </label>
     );

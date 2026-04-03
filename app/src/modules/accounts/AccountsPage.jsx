@@ -85,48 +85,51 @@ export default function AccountsPage() {
     const moneyAccounts = accounts.filter(isMoneyAccount);
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="accounts-page">
+            <header className="accounts-header">
                 <div>
-                    <h2 className="kb-h2" style={{ marginBottom: 4 }}>
-                        Accounts
-                    </h2>
-                    <p className="kb-muted" style={{ margin: 0 }}>
-                        Monitor balances and quick actions.
-                    </p>
+                    <p className="accounts-eyebrow">Financial overview</p>
+                    <h1>Accounts</h1>
+                    <p className="accounts-subtitle">Monitor balances and manage ledgers effortlessly.</p>
                 </div>
-                <button className="kb-btn kb-btn--primary" onClick={() => setShowAccountForm(true)}>
+                <button className="accounts-primary-btn" onClick={() => setShowAccountForm(true)}>
                     Add Account
                 </button>
-            </div>
+            </header>
 
-            <div className="">
-                {loading && !accounts.length ? (
-                    <p>Loading summary…</p>
-                ) : (
-                    <AccountsSummary accounts={accounts} />
-                )}
-            </div>
+            <div className="accounts-grid">
+                <div className="accounts-column">
+                    <section className="accounts-card">
+                        {loading && !accounts.length ? (
+                            <p>Loading summary…</p>
+                        ) : (
+                            <AccountsSummary accounts={accounts} />
+                        )}
+                    </section>
 
-            <div className="">
-                <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
-                    <h3 className="kb-h3" style={{ margin: 0 }}>
-                        Money Accounts
-                    </h3>
-                    <span className="kb-muted">Tap a card to open the ledger.</span>
+                    <section className="accounts-card">
+                        <div className="accounts-card-header">
+                            <div>
+                                <h3>Money Accounts</h3>
+                                <p>Tap a card to open the ledger.</p>
+                            </div>
+                        </div>
+                        {loading && !accounts.length ? (
+                            <p>Loading…</p>
+                        ) : (
+                            <MoneyAccountsList accounts={moneyAccounts} onSelectAccount={goToAccount} />
+                        )}
+                    </section>
+                    <section className="accounts-card accounts-table-card">
+                        <div className="accounts-card-header">
+                            <div>
+                                <h3>All Accounts</h3>
+                                <p>Full ledger view with balances and types.</p>
+                            </div>
+                        </div>
+                        {allAccountsTable}
+                    </section>
                 </div>
-                {loading && !accounts.length ? (
-                    <p>Loading…</p>
-                ) : (
-                    <MoneyAccountsList accounts={moneyAccounts} onSelectAccount={goToAccount} />
-                )}
-            </div>
-
-            <div className="kb-card" style={{ padding: 24 }}>
-                <h3 className="kb-h3" style={{ marginBottom: 16 }}>
-                    All Accounts
-                </h3>
-                {allAccountsTable}
             </div>
 
             {showAccountForm && (

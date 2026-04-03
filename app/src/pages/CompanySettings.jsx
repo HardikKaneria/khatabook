@@ -14,14 +14,15 @@ import {
     Select,
     Space,
     Switch,
-    Typography,
 } from "antd";
 import { getAuth } from "../utils/authStorage";
 import { useToast } from "../components/ToastProvider";
 import { makeDefaultApiFetch } from "../utils/apiClient";
+import PageContainer from "../components/ui/PageContainer.jsx";
+import PageHeader from "../components/ui/PageHeader.jsx";
+import PrimaryButton from "../components/ui/PrimaryButton.jsx";
 
 // ---------------------------------------------------------------------------
-const { Title, Text } = Typography;
 const { useBreakpoint } = Grid;
 
 // --------------------------- Defaults --------------------------------------
@@ -351,46 +352,34 @@ export default function SettingsAntD() {
     );
 
     return (
-        <ConfigProvider
-            theme={{
-                token: { borderRadius: 14 },
-                components: { Card: { paddingLG: 20 }, Anchor: { paddingBlock: 8 } },
-            }}
-        >
-            <Row gutter={[16, 16]} style={{ padding: 16, gap: 20 }}>
-                {/* Main content */}
-                <Col
-                    xs={24}
-                    lg={15}
-                    xl={16}
-                    xxl={17}
-                    className="shadow-xl bg-white"
-                    style={{ padding: 20, borderRadius: 14 }}
-                >
-                    <Space direction="vertical" size={16} style={{ display: "flex" }}>
-                        {/* Header + Save all button */}
-                        <Row align="middle" justify="space-between" style={{ width: "100%" }}>
-                            <Col>
-                                <Title level={3} style={{ margin: 0 }}>
-                                    Settings
-                                </Title>
-                                <Text type="secondary">
-                                    One page. Everything you need. Expand a section, edit, and save independently.
-                                </Text>
-                                {lastError ? (
-                                    <Text type="danger" style={{ display: "block", marginTop: 8 }}>
-                                        {lastError}
-                                    </Text>
-                                ) : null}
-                            </Col>
-                            <Col>
-                                <Button type="primary" onClick={onSaveAll} loading={savingAll} disabled={!data || loading}>
-                                    Save all
-                                </Button>
-                            </Col>
-                        </Row>
+        <PageContainer>
+            <ConfigProvider
+                theme={{
+                    token: { borderRadius: 14 },
+                    components: { Card: { paddingLG: 20 }, Anchor: { paddingBlock: 8 } },
+                }}
+            >
+                <PageHeader
+                    eyebrow="Organization"
+                    title="Company Settings"
+                    subtitle="One page. Everything you need. Expand a section, edit, and save independently."
+                    actions={
+                        <PrimaryButton onClick={onSaveAll} disabled={!data || loading} style={{ minWidth: 140 }}>
+                            {savingAll ? "Saving…" : "Save All"}
+                        </PrimaryButton>
+                    }
+                />
+                {lastError ? (
+                    <p className="text-red-600" style={{ marginTop: -16, marginBottom: 12 }}>
+                        {lastError}
+                    </p>
+                ) : null}
 
-                        {/* Sections */}
+                <Row gutter={[16, 16]} style={{ gap: 20 }}>
+                    {/* Main content */}
+                    <Col xs={24} lg={15} xl={16} xxl={17}>
+                        <Space direction="vertical" size={20} style={{ display: "flex" }}>
+                            {/* Sections */}
                         <CompanySection
                             loading={loading}
                             value={withDefaults("company")}
@@ -459,14 +448,7 @@ export default function SettingsAntD() {
                 </Col>
 
                 {/* Sticky nav */}
-                <Col
-                    xs={24}
-                    lg={8}
-                    xl={7}
-                    xxl={6}
-                    className="shadow-xl bg-white"
-                    style={{ padding: 20, borderRadius: 14 }}
-                >
+                <Col xs={24} lg={8} xl={7} xxl={6}>
                     <Card
                         className="kbs-sticky-card"
                         style={{ position: "sticky", top: 80, alignSelf: "flex-start", border: "none" }}
@@ -483,11 +465,8 @@ export default function SettingsAntD() {
                     </Card>
                 </Col>
             </Row>
-
-            <style>{`
-        .kbs-card { box-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.06); }
-      `}</style>
         </ConfigProvider>
+        </PageContainer>
     );
 }
 

@@ -1,8 +1,6 @@
 // src/pages/UsersAdmin.jsx
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-	Card,
-	Typography,
 	Space,
 	Form,
 	Input,
@@ -16,8 +14,8 @@ import { MailOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { getAuth } from "../utils/authStorage";
 import { useToast } from "../components/ToastProvider";
 import { makeDefaultApiFetch } from "../utils/apiClient";
-
-const { Title, Text } = Typography;
+import PageContainer from "../components/ui/PageContainer.jsx";
+import PageHeader from "../components/ui/PageHeader.jsx";
 
 const ROLE_OPTIONS = [
 	{ value: "company_admin", label: "Company Admin" },
@@ -359,107 +357,96 @@ export default function UsersAdmin() {
 		]
 	);
 
-	if (authLoading) {
-		return (
-			<div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-8">
-				<Card className="rounded-2xl shadow-lg border border-gray-100 bg-white">
-					<Title level={4} style={{ marginTop: 0 }}>
-						Users
-					</Title>
-					<Text type="secondary">Loading your organization data…</Text>
-				</Card>
+	const renderInviteCard = () => (
+		<section className="ui-card">
+			<div className="ui-card-header">
+				<div>
+					<h3>Invite a user</h3>
+					<p>Send an invitation to join your organization.</p>
+				</div>
 			</div>
-		);
+
+			<Form form={form} layout="inline" onFinish={handleInvite} requiredMark={false}>
+				<Form.Item
+					name="email"
+					rules={[
+						{ required: true, message: "Email is required" },
+						{ type: "email", message: "Enter a valid email" },
+					]}
+				>
+					<Input
+						placeholder="name@company.com"
+						style={{ width: 280 }}
+						disabled={!manageableRoles.length}
+					/>
+				</Form.Item>
+				<Form.Item name="role">
+					<Select
+						style={{ width: 220 }}
+						options={roleOptionsForSelect}
+						disabled={!roleOptionsForSelect.length}
+					/>
+				</Form.Item>
+				<Form.Item>
+					<Button
+						type="primary"
+						htmlType="submit"
+						icon={<PlusOutlined />}
+						loading={inviting}
+						disabled={!roleOptionsForSelect.length}
+					>
+						Invite
+					</Button>
+				</Form.Item>
+			</Form>
+		</section>
+	);
+
+	const renderUsersTable = () => (
+		<section className="ui-card">
+			<div className="ui-card-header">
+				<div>
+					<h3>Organization Users</h3>
+					<p>Manage members and their roles.</p>
+				</div>
+			</div>
+			<Table
+				rowKey="id"
+				loading={loading}
+				dataSource={users}
+				columns={columns}
+				pagination={{ pageSize: 10 }}
+			/>
+		</section>
+	);
+
+	const pageShell = (children) => (
+		<PageContainer>
+			<PageHeader
+				eyebrow="Team"
+				title="Users"
+				subtitle="Manage organization access, invite teammates, and update roles."
+			/>
+			{children}
+		</PageContainer>
+	);
+
+	if (authLoading) {
+		return pageShell(<section className="ui-card"><p>Loading your organization data…</p></section>);
 	}
 
 	if (!canViewUsers) {
-		return (
-			<div className="min-h-screen bg-slate-50 p-4 md:p-6 lg:p-8">
-				<Card className="rounded-2xl shadow-lg border border-gray-100 bg-white">
-					<Title level={4} style={{ marginTop: 0 }}>
-						Users
-					</Title>
-					<Text type="secondary">
-						You do not have permission to manage organization members.
-					</Text>
-				</Card>
-			</div>
+		return pageShell(
+			<section className="ui-card">
+				<p>You do not have permission to manage organization members.</p>
+			</section>
 		);
 	}
 
-	return (
-		<div className="min-h-screen md:p-4 lg:p-4">
-			<Space direction="vertical" size={16} style={{ display: "flex" }}>
-				<Card className="rounded-2xl shadow-xl border border-gray-100 bg-white transition-shadow hover:shadow-xl">
-					<Space direction="vertical" size={4} className="w-full">
-						<Title level={4} style={{ margin: 0 }}>
-							Invite a user
-						</Title>
-						<Text type="secondary">
-							Send an invitation to join your organization.
-						</Text>
-					</Space>
-
-					<Form
-						form={form}
-						layout="inline"
-						onFinish={handleInvite}
-						className="mt-3"
-						requiredMark={false}
-					>
-						<Form.Item
-							name="email"
-							rules={[
-								{ required: true, message: "Email is required" },
-								{ type: "email", message: "Enter a valid email" },
-							]}
-						>
-							<Input
-								placeholder="name@company.com"
-								style={{ width: 280 }}
-								disabled={!manageableRoles.length}
-							/>
-						</Form.Item>
-						<Form.Item name="role">
-							<Select
-								style={{ width: 220 }}
-								options={roleOptionsForSelect}
-								disabled={!roleOptionsForSelect.length}
-							/>
-						</Form.Item>
-						<Form.Item>
-							<Button
-								type="primary"
-								htmlType="submit"
-								icon={<PlusOutlined />}
-								loading={inviting}
-								disabled={!roleOptionsForSelect.length}
-							>
-								Invite
-							</Button>
-						</Form.Item>
-					</Form>
-				</Card>
-
-				<Card className="rounded-2xl shadow-xl border border-gray-100 bg-white transition-shadow hover:shadow-xl">
-					<Space direction="vertical" size={4} className="w-full">
-						<Title level={4} style={{ margin: 0 }}>
-							Organization Users
-						</Title>
-						<Text type="secondary">Manage members and their roles.</Text>
-					</Space>
-
-					<div className="mt-3 rounded-xl overflow-hidden border border-gray-100 bg-white">
-						<Table
-							rowKey="id"
-							loading={loading}
-							dataSource={users}
-							columns={columns}
-							pagination={{ pageSize: 10 }}
-						/>
-					</div>
-				</Card>
-			</Space>
-		</div>
+	return pageShell(
+		<>
+			{renderInviteCard()}
+			{renderUsersTable()}
+		</>
 	);
 }

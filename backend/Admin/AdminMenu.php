@@ -3,9 +3,20 @@
 namespace KBS\Admin;
 
 class AdminMenu {
+	private const PAGE_SLUGS = [
+		'kbs-admin',
+		'kbs-registration-logs',
+		'kbs-system-logs',
+		'kbs-otp-attempts',
+	];
+
 	public static function init() {
 		add_action('admin_menu', [self::class, 'register_menu']);
 		add_action('admin_enqueue_scripts', [self::class, 'enqueue_custom_styles']);
+	}
+
+	public static function get_page_slugs(): array {
+		return self::PAGE_SLUGS;
 	}
 
 	public static function register_menu() {
@@ -57,15 +68,19 @@ class AdminMenu {
 	}
 
 	public static function enqueue_custom_styles($hook) {
-		// Only load for kbs-admin pages
-		if (strpos($hook, 'kbs-admin') !== false) {
-			wp_enqueue_style(
-				'kbs-admin-style',
-				KHATABOOK_PLUGIN_FILE . '/assets/css/admin-style.css',
-				[],
-				'1.0'
-			);
+		$page = isset($_GET['page']) ? sanitize_key(wp_unslash($_GET['page'])) : '';
+		if (!in_array($page, self::get_page_slugs(), true)) {
+			return;
 		}
+
+		$style_path = plugin_dir_path(KHATABOOK_PLUGIN_FILE) . 'assets/css/admin-style.css';
+
+		wp_enqueue_style(
+			'kbs-admin-style',
+			plugin_dir_url(KHATABOOK_PLUGIN_FILE) . 'assets/css/admin-style.css',
+			[],
+			file_exists($style_path) ? (string) filemtime($style_path) : '1.0'
+		);
 	}
 
 	public static function render_pending_users() {

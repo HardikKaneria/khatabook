@@ -28,11 +28,6 @@ class Plugin
         add_action('init', [AdminMenu::class, 'init']);
         add_action('admin_init', [AdminAccess::class, 'restrict_dashboard']);
         add_action('rest_api_init', [EndpointManager::class, 'register_endpoints']);
-        add_action('admin_enqueue_scripts', function($hook) {
-            if (strpos($hook, 'kbs-admin') !== false) {
-                wp_enqueue_style('kbs-admin-style', plugin_dir_url(__FILE__) . 'assets/css/admin-style.css');
-            }
-        });
         add_action('admin_init', [PendingUserController::class, 'handle_actions']);
         add_action('after_setup_theme', [AdminAccess::class, 'hide_admin_bar']);
         add_filter('login_redirect', [AdminAccess::class, 'redirect_after_login'], 10, 3);

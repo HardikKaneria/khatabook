@@ -18,6 +18,7 @@ use KBS\Api\VyRestInvoices;
 use KBS\Api\VyRestContacts;
 use KBS\Api\VyRestReports;
 use KBS\Api\VyRestInvoiceSettings;
+use KBS\Api\VyRestInvoicePreview;
 
 defined('ABSPATH') || exit;
 
@@ -184,6 +185,7 @@ class EndpointManager
         VyRestContacts::register_routes();
         VyRestReports::register_routes();
         VyRestInvoiceSettings::register_routes();
+        VyRestInvoicePreview::register_routes();
     }
 
     /* ===== Helpers / permission callbacks ===== */

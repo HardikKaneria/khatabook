@@ -110,7 +110,7 @@ export default function ProfitTaxPage() {
             { label: "Net GST Payable", value: formatCurrency(gstSummary.net_gst_payable ?? 0) },
         ];
         return (
-            <div className="kb-grid-cards">
+            <div className="kb-grid-cards" style={{ marginBottom: 20 }}>
                 {cards.map((card) => (
                     <div key={card.label} className="kb-card" style={{ padding: 20 }}>
                         <p className="kb-muted" style={{ marginBottom: 8 }}>{card.label}</p>
@@ -122,94 +122,92 @@ export default function ProfitTaxPage() {
     };
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="reports-page">
+            <header className="reports-header">
                 <div>
-                    <h2 className="kb-h2" style={{ marginBottom: 4 }}>Profit &amp; Tax</h2>
-                    <p className="kb-muted" style={{ margin: 0 }}>Understand your income, expenses, and tax obligations.</p>
+                    <p className="reports-eyebrow">Financial health</p>
+                    <h1>Profit &amp; Tax</h1>
+                    <p className="reports-subtitle">Understand your income, expenses, and tax obligations.</p>
                 </div>
-            </div>
+            </header>
 
-            <div className="kb-card" style={{ padding: 16 }}>
-                <div className="flex flex-wrap gap-3">
+            <section className="reports-card">
+                <div className="reports-card-header">
+                    <div>
+                        <h3>Date Range</h3>
+                        <p>Use quick presets or pick a custom period.</p>
+                    </div>
+                </div>
+                <div className="reports-filter-row">
                     {rangePresets.map((preset) => (
-                        <button
-                            key={preset.key}
-                            className="kb-btn kb-btn--ghost"
-                            onClick={() => handlePreset(preset)}
-                        >
+                        <button key={preset.key} className="reports-ghost-btn" onClick={() => handlePreset(preset)}>
                             {preset.label}
                         </button>
                     ))}
-                    <div style={{ flexGrow: 1 }} />
-                    <div>
-                        <label className="kb-muted">From</label>
+                    <div className="field">
+                        <label>From</label>
                         <input
                             type="date"
-                            className="kb-input"
                             value={range.from}
                             onChange={(e) => setRange((prev) => ({ ...prev, from: e.target.value }))}
                         />
                     </div>
-                    <div>
-                        <label className="kb-muted">To</label>
+                    <div className="field">
+                        <label>To</label>
                         <input
                             type="date"
-                            className="kb-input"
                             value={range.to}
                             onChange={(e) => setRange((prev) => ({ ...prev, to: e.target.value }))}
                         />
                     </div>
                 </div>
-            </div>
+            </section>
 
             {error ? (
-                <div className="kb-card" style={{ padding: 24 }}>
+                <section className="reports-card">
                     <p className="text-red-600">{error}</p>
-                </div>
+                </section>
             ) : null}
 
             {loading ? (
-                <div className="kb-card" style={{ padding: 24 }}>
+                <section className="reports-card">
                     <p>Loading profit and tax summary…</p>
-                </div>
+                </section>
             ) : (
                 <>
                     {summaryCards()}
-                    <div className="kb-grid-2">
+                    <div className="reports-grid-2">
                         {renderAccountTable("Income by Account", profitSummary?.income?.by_account || profitSummary?.income_by_account)}
                         {renderAccountTable("Expense by Account", profitSummary?.expense?.by_account || profitSummary?.expense_by_account)}
                     </div>
-                    <div className="kb-card" style={{ padding: 24 }}>
-                        <h3 className="kb-h3" style={{ marginTop: 0 }}>GST Summary</h3>
+                    <section className="reports-card">
+                        <h3 className="reports-card-title">GST Summary</h3>
                         {gstSummary ? (
-                            <div className="kb-grid-3">
+                            <div className="reports-grid-3">
                                 <div>
-                                    <p className="kb-muted">Output Tax</p>
-                                    <p style={{ fontWeight: 600 }}>{formatCurrency(gstSummary.output_tax)}</p>
+                                    <p className="reports-label">Output Tax</p>
+                                    <p className="reports-value">{formatCurrency(gstSummary.output_tax)}</p>
                                 </div>
                                 <div>
-                                    <p className="kb-muted">Input Tax</p>
-                                    <p style={{ fontWeight: 600 }}>{formatCurrency(gstSummary.input_tax)}</p>
+                                    <p className="reports-label">Input Tax</p>
+                                    <p className="reports-value">{formatCurrency(gstSummary.input_tax)}</p>
                                 </div>
                                 <div>
-                                    <p className="kb-muted">Net GST Payable</p>
-                                    <p style={{ fontWeight: 600 }}>{formatCurrency(gstSummary.net_gst_payable)}</p>
+                                    <p className="reports-label">Net GST Payable</p>
+                                    <p className="reports-value">{formatCurrency(gstSummary.net_gst_payable)}</p>
                                 </div>
                             </div>
                         ) : (
                             <p className="kb-muted">No GST data for this period.</p>
                         )}
-                    </div>
-                    <div className="kb-card" style={{ padding: 20 }}>
-                        <p className="kb-muted" style={{ marginBottom: 4 }}>
-                            These numbers are estimates based on entries recorded in Vyavhar.
+                    </section>
+                    <section className="reports-card reports-note">
+                        <p>
+                            These numbers are estimates based on entries recorded in Vyavhar. Work with your Chartered Accountant for
+                            final filings. Adjustments such as depreciation, personal drawings, or non-GST-eligible expenses may alter the
+                            actual tax payable.
                         </p>
-                        <p className="kb-muted" style={{ margin: 0 }}>
-                            Work with your Chartered Accountant for final filings. Adjustments such as depreciation, personal drawings,
-                            or non-GST-eligible expenses may alter the actual tax payable.
-                        </p>
-                    </div>
+                    </section>
                 </>
             )}
         </div>

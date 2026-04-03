@@ -58,41 +58,54 @@ export default function ExpensesPage() {
     };
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="expenses-page">
+            <header className="expenses-header">
                 <div>
-                    <h2 className="kb-h2" style={{ marginBottom: 4 }}>
-                        Expenses
-                    </h2>
-                    <p className="kb-muted" style={{ margin: 0 }}>
-                        Track operational spend and payouts.
-                    </p>
+                    <p className="expenses-eyebrow">Operational spend</p>
+                    <h1>Expenses</h1>
+                    <p className="expenses-subtitle">Track spend, payouts, and categories.</p>
                 </div>
-                <button className="kb-btn kb-btn--primary" onClick={() => setShowForm(true)}>
+                <button className="expenses-primary-btn" onClick={() => setShowForm(true)}>
                     Add Expense
                 </button>
-            </div>
+            </header>
 
-            <div className="kb-card" style={{ padding: 16 }}>
-                <div className="flex flex-wrap gap-3">
+            <section className="expenses-card">
+                <div className="expenses-card-header">
                     <div>
-                        <label className="kb-muted">From</label>
-                        <input type="date" className="kb-input" value={filters.from} onChange={handleFilterChange("from")} />
-                    </div>
-                    <div>
-                        <label className="kb-muted">To</label>
-                        <input type="date" className="kb-input" value={filters.to} onChange={handleFilterChange("to")} />
-                    </div>
-                    <div style={{ flex: "1 1 200px" }}>
-                        <label className="kb-muted">Category</label>
-                        <input className="kb-input" value={filters.category} onChange={handleFilterChange("category")} placeholder="All" />
+                        <h3>Filters</h3>
+                        <p>Use date range and category to narrow down expenses.</p>
                     </div>
                 </div>
-            </div>
+                <div className="expenses-filter-row">
+                    <div className="field">
+                        <label>From</label>
+                        <input type="date" value={filters.from} onChange={handleFilterChange("from")} />
+                    </div>
+                    <div className="field">
+                        <label>To</label>
+                        <input type="date" value={filters.to} onChange={handleFilterChange("to")} />
+                    </div>
+                    <div className="field">
+                        <label>Category</label>
+                        <input
+                            value={filters.category}
+                            onChange={handleFilterChange("category")}
+                            placeholder="All"
+                        />
+                    </div>
+                </div>
+            </section>
 
-            <div className="kb-card" style={{ padding: 24 }}>
+            <section className="expenses-card">
+                <div className="expenses-card-header">
+                    <div>
+                        <h3>Expense List</h3>
+                        <p>Select an expense row to view details.</p>
+                    </div>
+                </div>
                 <ExpensesList expenses={expenses} loading={loading} error={error} onSelectExpense={goToExpense} />
-            </div>
+            </section>
 
             {showForm && (
                 <Modal title="New Expense" onClose={() => setShowForm(false)}>

@@ -41,53 +41,63 @@ export default function InvoicesPage() {
     };
 
     return (
-        <div className="space-y-4">
-            <div className="flex items-center justify-between">
+        <div className="invoices-page">
+            <header className="invoices-header">
                 <div>
-                    <h2 className="kb-h2" style={{ marginBottom: 4 }}>
-                        Invoices
-                    </h2>
-                    <p className="kb-muted" style={{ margin: 0 }}>
-                        Track sales, status, and incoming payments.
-                    </p>
+                    <p className="invoices-eyebrow">Sales pipeline</p>
+                    <h1>Invoices</h1>
+                    <p className="invoices-subtitle">Track sales, status, and incoming payments.</p>
                 </div>
-                <button className="kb-btn kb-btn--primary" onClick={() => setShowForm(true)}>
+                <button className="invoices-primary-btn" onClick={() => setShowForm(true)}>
                     New Invoice
                 </button>
-            </div>
+            </header>
 
-            <div className="kb-card" style={{ padding: 16 }}>
-                <div className="flex flex-wrap gap-3">
-                    <div style={{ flex: "1 1 220px" }}>
-                        <label className="kb-muted">Status</label>
-                        <select className="kb-input" value={filters.status} onChange={handleFilterChange("status")}>
-                            <option value="">All</option>
-                            <option value="DRAFT">Draft</option>
-                            <option value="SENT">Sent</option>
-                            <option value="PARTIAL">Partial</option>
-                            <option value="PAID">Paid</option>
-                            <option value="VOID">Void</option>
-                        </select>
+            <div className="invoices-grid">
+                <section className="invoices-card">
+                    <div className="invoices-card-header">
+                        <div>
+                            <h3>Filters</h3>
+                            <p>Narrow down invoices by status or customer.</p>
+                        </div>
                     </div>
-                    <div style={{ flex: "2 1 260px" }}>
-                        <label className="kb-muted">Customer / Invoice</label>
-                        <input
-                            className="kb-input"
-                            placeholder="Search customer or number"
-                            value={filters.customer_name}
-                            onChange={handleFilterChange("customer_name")}
-                        />
+                    <div className="invoices-filter-row">
+                        <div className="field">
+                            <label>Status</label>
+                            <select value={filters.status} onChange={handleFilterChange("status")}>
+                                <option value="">All</option>
+                                <option value="DRAFT">Draft</option>
+                                <option value="SENT">Sent</option>
+                                <option value="PARTIAL">Partial</option>
+                                <option value="PAID">Paid</option>
+                                <option value="VOID">Void</option>
+                            </select>
+                        </div>
+                        <div className="field">
+                            <label>Customer / Invoice</label>
+                            <input
+                                placeholder="Search customer or number"
+                                value={filters.customer_name}
+                                onChange={handleFilterChange("customer_name")}
+                            />
+                        </div>
                     </div>
-                </div>
-            </div>
+                </section>
 
-            <div className="kb-card" style={{ padding: 24 }}>
-                <InvoiceList
-                    invoices={invoices}
-                    loading={loading}
-                    error={error}
-                    onSelectInvoice={goToInvoice}
-                />
+                <section className="invoices-card">
+                    <div className="invoices-card-header">
+                        <div>
+                            <h3>Invoice List</h3>
+                            <p>Click an invoice to open the detail view.</p>
+                        </div>
+                    </div>
+                    <InvoiceList
+                        invoices={invoices}
+                        loading={loading}
+                        error={error}
+                        onSelectInvoice={goToInvoice}
+                    />
+                </section>
             </div>
 
             {showForm && (
