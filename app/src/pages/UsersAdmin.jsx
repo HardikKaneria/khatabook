@@ -55,6 +55,17 @@ const getOrgIdFromAuth = (auth) => {
 	);
 };
 
+const getCurrentOrgRole = (auth, orgId) => {
+	const user = auth?.user || {};
+	if (orgId && Array.isArray(user?.orgs)) {
+		const activeOrg = user.orgs.find((org) => Number(org?.org_id) === Number(orgId));
+		if (activeOrg?.role) {
+			return normalizeRole(activeOrg.role);
+		}
+	}
+	return normalizeRole(user?.role || "");
+};
+
 export default function UsersAdmin() {
 	const [form] = Form.useForm();
 	const message = useToast();
@@ -93,7 +104,7 @@ export default function UsersAdmin() {
 		return makeDefaultApiFetch(auth?.rest, auth?.token);
 	}, [auth, auth?.rest, auth?.token]);
 
-	const currentRole = (auth?.user?.role || "").toLowerCase();
+	const currentRole = useMemo(() => getCurrentOrgRole(auth, orgId), [auth, orgId]);
 	const manageableRoles = useMemo(() => {
 		if (currentRole === "administrator") {
 			return ["company_admin", "c_manager", "c_employee"];

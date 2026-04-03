@@ -2,6 +2,10 @@
 
 namespace KBS\Accounts;
 
+/**
+ * Legacy pre-organization helper retained for backward compatibility.
+ * Current membership and authorization flows use kbs_organizations and kbs_user_org_roles.
+ */
 class ClientAccount
 {
     /**

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { payInvoice } from "./api";
+import { payInvoice, updateInvoice } from "./api";
 import { useInvoice } from "./hooks";
 import InvoiceDetail from "./InvoiceDetail.jsx";
 import InvoicePaymentForm from "./InvoicePaymentForm.jsx";
+import InvoiceForm from "./InvoiceForm.jsx";
 import { useAccounts } from "../accounts/hooks";
 import apiClient from "../../lib/apiClient";
 import { useToast } from "../../components/ToastProvider";
@@ -13,11 +14,14 @@ const isIncomeAccount = (acct) => (acct?.type || "").toUpperCase() === "INCOME";
 export default function InvoiceDetailPage({ invoiceId }) {
     const [refreshKey, setRefreshKey] = useState(0);
     const [showPaymentForm, setShowPaymentForm] = useState(false);
+    const [showEditForm, setShowEditForm] = useState(false);
     const [showEmailModal, setShowEmailModal] = useState(false);
     const [emailRecipients, setEmailRecipients] = useState("");
     const [emailError, setEmailError] = useState("");
     const [emailSending, setEmailSending] = useState(false);
     const [actionError, setActionError] = useState("");
+    const [editError, setEditError] = useState("");
+    const [pdfGenerating, setPdfGenerating] = useState(false);
     const { data: invoice, loading, error } = useInvoice(invoiceId, refreshKey);
     const { data: accounts = [] } = useAccounts({}, refreshKey);
     const toast = useToast();
@@ -25,6 +29,7 @@ export default function InvoiceDetailPage({ invoiceId }) {
     const moneyAccounts = useMemo(() => (accounts || []).filter(isMoneyAccount), [accounts]);
     const incomeAccounts = useMemo(() => (accounts || []).filter(isIncomeAccount), [accounts]);
     const hasInvoice = Boolean(invoice);
+    const canEditInvoice = Boolean(invoice?.can_edit);
     const canRecordPayment = Boolean(invoice && moneyAccounts.length && incomeAccounts.length);
 
     useEffect(() => {
@@ -48,6 +53,18 @@ export default function InvoiceDetailPage({ invoiceId }) {
             setRefreshKey((value) => value + 1);
         } catch (err) {
             setActionError(err?.message || "Unable to record payment.");
+        }
+    };
+
+    const handleUpdateInvoice = async (payload) => {
+        try {
+            setEditError("");
+            await updateInvoice(invoiceId, payload);
+            toast.success("Invoice updated successfully.");
+            setShowEditForm(false);
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            setEditError(err?.message || "Unable to update invoice.");
         }
     };
 
@@ -76,6 +93,20 @@ export default function InvoiceDetailPage({ invoiceId }) {
         }
     };
 
+    const handleGeneratePdf = async () => {
+        if (!invoice) return;
+        setPdfGenerating(true);
+        try {
+            await apiClient.post(`/vy/v1/invoices/${invoice.id}/generate-pdf`, {});
+            toast.success("Invoice PDF generated.");
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            toast.error(err?.message || "Unable to generate invoice PDF.");
+        } finally {
+            setPdfGenerating(false);
+        }
+    };
+
     const emailInfo = invoice?.email_sent_at
         ? `Last emailed ${new Date(invoice.email_sent_at).toLocaleString()}${
               invoice.email_sent_to ? ` to ${invoice.email_sent_to}` : ""
@@ -100,10 +131,21 @@ export default function InvoiceDetailPage({ invoiceId }) {
                                 Download PDF
                             </a>
                         ) : (
-                            <button className="kb-btn kb-btn--ghost" disabled>
-                                PDF not ready
+                            <button className="kb-btn kb-btn--ghost" disabled={!hasInvoice || pdfGenerating} onClick={handleGeneratePdf}>
+                                {pdfGenerating ? "Generating PDF…" : "Generate PDF"}
                             </button>
                         )}
+                        <button
+                            className="kb-btn kb-btn--secondary"
+                            disabled={!canEditInvoice}
+                            onClick={() => {
+                                setEditError("");
+                                setShowEditForm(true);
+                            }}
+                            title={!canEditInvoice ? invoice?.edit_block_reason || "This invoice can no longer be edited." : undefined}
+                        >
+                            Edit Invoice
+                        </button>
                         <button
                             className="kb-btn kb-btn--secondary"
                             disabled={!hasInvoice}
@@ -125,6 +167,11 @@ export default function InvoiceDetailPage({ invoiceId }) {
                     {invoice && !canRecordPayment ? (
                         <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
                             Add at least one money account and one income account to record payments.
+                        </p>
+                    ) : null}
+                    {invoice && !canEditInvoice && invoice?.edit_block_reason ? (
+                        <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+                            {invoice.edit_block_reason}
                         </p>
                     ) : null}
                     {emailInfo ? (
@@ -161,6 +208,18 @@ export default function InvoiceDetailPage({ invoiceId }) {
                     )}
                 </Modal>
             )}
+
+            {showEditForm && invoice ? (
+                <Modal title="Edit Invoice" onClose={() => setShowEditForm(false)} width="min(700px, 96vw)">
+                    {editError ? <p className="text-red-600 text-sm">{editError}</p> : null}
+                    <InvoiceForm
+                        initialData={invoice}
+                        submitLabel="Save Changes"
+                        onSubmit={handleUpdateInvoice}
+                        onCancel={() => setShowEditForm(false)}
+                    />
+                </Modal>
+            ) : null}
 
             {showEmailModal && (
                 <Modal title="Email Invoice" onClose={() => setShowEmailModal(false)}>
@@ -201,7 +260,7 @@ export default function InvoiceDetailPage({ invoiceId }) {
     );
 }
 
-function Modal({ title, children, onClose }) {
+function Modal({ title, children, onClose, width = "min(420px, 95vw)" }) {
     return (
         <div
             style={{
@@ -214,7 +273,7 @@ function Modal({ title, children, onClose }) {
                 zIndex: 1000,
             }}
         >
-            <div className="kb-card" style={{ padding: 24, width: "min(420px, 95vw)", borderRadius: "var(--kb-radius-lg)" }}>
+            <div className="kb-card" style={{ padding: 24, width, maxHeight: "90vh", overflowY: "auto", borderRadius: "var(--kb-radius-lg)" }}>
                 <div className="flex items-center justify-between" style={{ marginBottom: 16 }}>
                     <h3 className="kb-h3" style={{ margin: 0 }}>
                         {title}

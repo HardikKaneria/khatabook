@@ -19,6 +19,7 @@ use KBS\Api\VyRestContacts;
 use KBS\Api\VyRestReports;
 use KBS\Api\VyRestInvoiceSettings;
 use KBS\Api\VyRestInvoicePreview;
+use KBS\Helpers\OrgHelper;
 
 defined('ABSPATH') || exit;
 
@@ -66,6 +67,26 @@ class EndpointManager
             'permission_callback' => '__return_true', // public
         ]);
 
+        register_rest_route(self::NS, '/invite', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [OrgUsersController::class, 'get_invite'],
+            'permission_callback' => '__return_true',
+            'args'                => [
+                'invite' => ['type' => 'string', 'required' => true],
+                'email'  => ['type' => 'string', 'required' => true],
+            ],
+        ]);
+
+        register_rest_route(self::NS, '/accept-invite', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [OrgUsersController::class, 'accept_invite'],
+            'permission_callback' => '__return_true',
+            'args'                => [
+                'invite' => ['type' => 'string', 'required' => true],
+                'email'  => ['type' => 'string', 'required' => true],
+            ],
+        ]);
+
         /* ---------------- Authenticated utility ---------------- */
         register_rest_route(self::NS, '/logout', [
             'methods'             => WP_REST_Server::CREATABLE,
@@ -77,6 +98,15 @@ class EndpointManager
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [__CLASS__, 'me'],
             'permission_callback' => [__CLASS__, 'require_logged_in'],
+        ]);
+
+        register_rest_route(self::NS, '/active-org', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'set_active_org'],
+            'permission_callback' => [__CLASS__, 'require_logged_in'],
+            'args'                => [
+                'org_id' => ['type' => 'integer', 'required' => true, 'sanitize_callback' => 'absint'],
+            ],
         ]);
 
         /* ---------------- Settings (delegate to SettingsController) ---------------- */
@@ -110,18 +140,36 @@ class EndpointManager
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [AdminData::class, 'get_registration_logs'],
             'permission_callback' => [__CLASS__, 'require_manage_options'],
+            'args'                => [
+                'page'     => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+                'per_page' => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+                'email'    => ['type' => 'string', 'required' => false],
+            ],
         ]);
 
         register_rest_route(self::NS, '/otp-attempts', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [AdminData::class, 'get_otp_attempts'],
             'permission_callback' => [__CLASS__, 'require_manage_options'],
+            'args'                => [
+                'page'     => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+                'per_page' => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+                'email'    => ['type' => 'string', 'required' => false],
+                'status'   => ['type' => 'string', 'required' => false],
+                'context'  => ['type' => 'string', 'required' => false],
+            ],
         ]);
 
         register_rest_route(self::NS, '/system-logs', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [AdminData::class, 'get_system_logs'],
             'permission_callback' => [__CLASS__, 'require_manage_options'],
+            'args'                => [
+                'page'     => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+                'per_page' => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+                'action'   => ['type' => 'string', 'required' => false],
+                'user_id'  => ['type' => 'integer', 'required' => false, 'sanitize_callback' => 'absint'],
+            ],
         ]);
 
         /** ------------- Org Users (per-organization management) ------------- */
@@ -190,18 +238,72 @@ class EndpointManager
 
     /* ===== Helpers / permission callbacks ===== */
 
-    public static function me(): WP_REST_Response|WP_Error
+    public static function me(WP_REST_Request $request): WP_REST_Response|WP_Error
     {
-        $user = wp_get_current_user();
+        $uid = self::assert_auth($request);
+        if (!$uid) {
+            return new WP_Error('unauthorized', 'Unauthorized', ['status' => 401]);
+        }
+
+        $user = get_userdata((int) $uid);
         if (!$user || !$user->ID) {
             return new WP_Error('unauthorized', 'Unauthorized', ['status' => 401]);
         }
+
+        $org_id = OrgHelper::current_org_id();
+        $role = $user->roles[0] ?? null;
+        $org_name = null;
+        $orgs = [];
+        if (!is_wp_error($org_id)) {
+            $org_role = OrgHelper::user_role_for_org((int) $user->ID, (int) $org_id);
+            if ($org_role) {
+                $role = $org_role;
+            }
+
+            $payload = OtpAuth::hydrate_existing_auth_payload((int) $user->ID, (int) $org_id);
+            if (!is_wp_error($payload)) {
+                $org_name = $payload['user']['org_name'] ?? null;
+                $orgs = $payload['user']['orgs'] ?? [];
+            }
+        }
+
         return new WP_REST_Response([
-            'id'    => (int) $user->ID,
-            'email' => $user->user_email,
-            'name'  => $user->display_name,
-            'role'  => $user->roles[0] ?? null,
+            'id'       => (int) $user->ID,
+            'email'    => $user->user_email,
+            'name'     => $user->display_name,
+            'role'     => $role,
+            'org_id'   => !is_wp_error($org_id) ? (int) $org_id : null,
+            'org_name' => $org_name,
+            'orgs'     => $orgs,
         ], 200);
+    }
+
+    public static function set_active_org(WP_REST_Request $request): WP_REST_Response|WP_Error
+    {
+        $uid = self::assert_auth($request);
+        if (!$uid) {
+            return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
+        }
+
+        $org_id = absint($request->get_param('org_id'));
+        if ($org_id <= 0) {
+            return new WP_Error('vy_bad_org', 'A valid organization is required.', ['status' => 400]);
+        }
+
+        $result = OrgHelper::set_active_org_for_user((int) $uid, $org_id);
+        if (is_wp_error($result)) {
+            return $result;
+        }
+
+        $payload = OtpAuth::hydrate_existing_auth_payload((int) $uid, $org_id);
+        if (is_wp_error($payload)) {
+            $payload = OtpAuth::create_auth_payload((int) $uid, $org_id);
+            if (is_wp_error($payload)) {
+                return $payload;
+            }
+        }
+
+        return new WP_REST_Response($payload, 200);
     }
 
     /** Accept either logged-in cookie+nonce, or our custom X-KBS-Token */
@@ -221,8 +323,9 @@ class EndpointManager
             return null;
         }
 
+        $stored_token = (string) get_user_meta($user_id, 'auth_token', true);
         $exp = (int) get_user_meta($user_id, 'auth_token_expires', true);
-        if (!$exp || time() >= $exp) {
+        if (!vy_auth_token_is_active((string) $token, $stored_token, $exp)) {
             return null;
         }
 
@@ -264,27 +367,44 @@ class EndpointManager
         return new WP_Error('forbidden', 'Insufficient permissions.', ['status' => 403]);
     }
 
-    /** Read access: any logged-in user with 'read' or role in {administrator, company_admin} */
-    public static function can_read(WP_REST_Request $request): bool
+    /** Read access: any authenticated user with membership in the requested org. */
+    public static function can_read(WP_REST_Request $request): bool|WP_Error
     {
         $uid = self::assert_auth($request);
         if (!$uid) {
-            return false;
+            return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
         }
-        $user = get_userdata($uid);
-        $role = $user->roles[0] ?? '';
-        return user_can($uid, 'read') || in_array($role, ['administrator', 'company_admin'], true);
+
+        $org_id = OrgHelper::resolve_request_org_id($request, (int) $uid);
+        if (is_wp_error($org_id)) {
+            return $org_id;
+        }
+
+        if (OrgHelper::user_can_access_org((int) $uid, (int) $org_id)) {
+            return true;
+        }
+
+        return new WP_Error('forbidden', 'Insufficient permissions.', ['status' => 403]);
     }
 
-    /** Write access: restrict to {administrator, company_admin} */
-    public static function can_write(WP_REST_Request $request): bool
+    /** Write access: restrict to org company admins (or site admins). */
+    public static function can_write(WP_REST_Request $request): bool|WP_Error
     {
         $uid = self::assert_auth($request);
         if (!$uid) {
-            return false;
+            return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
         }
-        $user = get_userdata($uid);
-        $role = $user->roles[0] ?? '';
-        return in_array($role, ['administrator', 'company_admin'], true);
+
+        $org_id = OrgHelper::resolve_request_org_id($request, (int) $uid);
+        if (is_wp_error($org_id)) {
+            return $org_id;
+        }
+
+        $role = OrgHelper::user_role_for_org((int) $uid, (int) $org_id);
+        if (in_array($role, ['administrator', 'company_admin'], true)) {
+            return true;
+        }
+
+        return new WP_Error('forbidden', 'Insufficient permissions.', ['status' => 403]);
     }
 }

@@ -38,11 +38,11 @@ class Vy_Invoice_Pdf
         $settingsData = vy_fetch_invoice_template_settings($org_id);
         $settings = (object) $settingsData;
 
-        $templateId = $invoice->template_id ?: ($settings->default_template_id ?: 'minimal-clean');
-        $templatePath = self::resolve_template_path($templateId);
+        $templateId = \vy_resolve_invoice_template_id($settings, $invoice);
+        $templatePath = \vy_get_invoice_template_path($templateId);
         if (!file_exists($templatePath)) {
             $templateId = 'minimal-clean';
-            $templatePath = self::resolve_template_path($templateId);
+            $templatePath = \vy_get_invoice_template_path($templateId);
         }
         $template = vy_get_invoice_template($templateId);
 
@@ -63,12 +63,6 @@ class Vy_Invoice_Pdf
         }
 
         return self::store_pdf($org_id, $invoice, $templateId, $pdfBinary);
-    }
-
-    private static function resolve_template_path(string $template_id): string
-    {
-        $base = trailingslashit(plugin_dir_path(KHATABOOK_PLUGIN_FILE) . 'backend/templates/invoices');
-        return $base . $template_id . '.php';
     }
 
     private static function render_template(string $path, array $context): ?string

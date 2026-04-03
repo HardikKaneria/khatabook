@@ -7,6 +7,8 @@ use WP_REST_Request;
 use WP_REST_Response;
 use WP_REST_Server;
 use KBS\Accounting\VyJournalEngine;
+use KBS\Core\RecordAuditLogger;
+use KBS\Notifications\InternalDocumentNotifier;
 
 defined('ABSPATH') || exit;
 
@@ -29,6 +31,12 @@ class VyRestInvoices
         register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [__CLASS__, 'get_invoice'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)', [
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => [__CLASS__, 'update_invoice'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
 
@@ -59,6 +67,12 @@ class VyRestInvoices
         register_rest_route(VyRestAccounts::NS, '/invoices/descriptions', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [__CLASS__, 'description_suggestions'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/payments', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'list_payments'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
     }
@@ -106,6 +120,8 @@ class VyRestInvoices
         if (is_wp_error($result)) {
             return $result;
         }
+
+        self::log_invoice_email_audit((int) $org, (int) $invoice['id'], (string) ($invoice['invoice_number'] ?? ''), $result);
 
         return new WP_REST_Response([
             'success'       => true,
@@ -207,6 +223,7 @@ class VyRestInvoices
             $invoiceNumber = self::generate_invoice_number((int) $org, $date);
         }
         $due = self::resolve_due_date((int) $org, $date, $dueInput);
+        $templateId = self::resolve_template_id((int) $org);
 
         $totals = self::calculate_totals($items);
 
@@ -226,11 +243,12 @@ class VyRestInvoices
                 'tax_total'     => $totals['tax_total'],
                 'total'         => $totals['total'],
                 'status'        => in_array($status, ['DRAFT','SENT','PARTIAL','PAID','VOID'], true) ? $status : 'SENT',
+                'template_id'   => $templateId,
                 'notes'         => wp_kses_post($body['notes'] ?? ''),
                 'created_at'    => current_time('mysql', true),
                 'updated_at'    => current_time('mysql', true),
             ],
-            ['%d','%s','%s','%s','%s','%s','%s','%s','%f','%f','%f','%s','%s','%s','%s']
+            ['%d','%d','%s','%s','%s','%s','%s','%s','%s','%f','%f','%f','%s','%s','%s','%s','%s']
         );
 
         if ($inserted === false) {
@@ -259,6 +277,22 @@ class VyRestInvoices
         }
 
         $responsePayload = ['id' => $invoice_id];
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            $invoice_id,
+            'created',
+            sprintf('Created invoice %s', $invoiceNumber),
+            [
+                'lines' => [
+                    'Customer: ' . ($contactData['name'] ?: 'Walk-in customer'),
+                    'Status: ' . (in_array($status, ['DRAFT','SENT','PARTIAL','PAID','VOID'], true) ? $status : 'SENT'),
+                    'Items: ' . count($totals['lines']),
+                    'Total: ' . RecordAuditLogger::money((float) $totals['total'], strtoupper((string) ($body['currency'] ?? 'INR'))),
+                ],
+            ]
+        );
+
         $settings = vy_fetch_invoice_template_settings((int) $org);
         if (!empty($settings['auto_email_on_create'])) {
             $emailResult = vy_send_invoice_email($invoice_id);
@@ -268,7 +302,14 @@ class VyRestInvoices
             } else {
                 $responsePayload['email_sent_to'] = $emailResult['recipients'];
                 $responsePayload['email_sent_at'] = $emailResult['sent_at'];
+                self::log_invoice_email_audit((int) $org, $invoice_id, $invoiceNumber, $emailResult);
             }
+        }
+
+        try {
+            InternalDocumentNotifier::notify_invoice_created((int) $org, $invoice_id);
+        } catch (\Throwable $throwable) {
+            error_log(sprintf('[Vyavhar Email] Internal invoice notification failed for invoice %d: %s', $invoice_id, $throwable->getMessage()));
         }
 
         return new WP_REST_Response($responsePayload, 201);
@@ -284,14 +325,7 @@ class VyRestInvoices
             return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
         }
 
-        global $wpdb;
-        $items = $wpdb->get_results($wpdb->prepare(
-            "SELECT description, quantity, unit_price, tax_rate, tax_amount, tax_type, line_total
-             FROM {$wpdb->prefix}vy_invoice_items WHERE org_id = %d AND invoice_id = %d",
-            $org,
-            $invoice['id']
-        ), ARRAY_A);
-
+        $items = self::fetch_invoice_items((int) $org, (int) $invoice['id']);
         $payments = self::get_invoice_payments((int) $org, $invoice['id']);
 
         $paidTotal = self::get_paid_amount($invoice['id']);
@@ -299,12 +333,179 @@ class VyRestInvoices
         $invoice['balance_due'] = max(0, (float) $invoice['total'] - $paidTotal);
         $invoice['items'] = $items ?: [];
         $invoice['payments'] = $payments;
+        $editState = vy_invoice_edit_state($invoice, $payments);
+        $invoice['can_edit'] = $editState['can_edit'];
+        $invoice['edit_block_reason'] = $editState['reason'];
         $invoice['contact_id'] = $invoice['contact_id'] ? (int) $invoice['contact_id'] : null;
         if ($invoice['contact_id']) {
             $invoice['contact'] = self::format_contact_summary(self::fetch_contact((int) $org, $invoice['contact_id']));
         }
+        $invoice['history'] = RecordAuditLogger::list_for_record((int) $org, 'invoice', (int) $invoice['id']);
 
         return new WP_REST_Response($invoice, 200);
+    }
+
+    public static function update_invoice(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        global $wpdb;
+        $invoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$invoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+
+        $payments = self::get_invoice_payments((int) $org, (int) $invoice['id']);
+        $invoice['paid_amount'] = self::get_paid_amount((int) $invoice['id']);
+        $editState = vy_invoice_edit_state($invoice, $payments);
+        if (!$editState['can_edit']) {
+            return new WP_Error('vy_invoice_locked', $editState['reason'] ?: 'This invoice can no longer be edited.', ['status' => 400]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $items = $body['items'] ?? [];
+        if (!$items || !is_array($items)) {
+            return new WP_Error('vy_no_items', 'At least one item is required.', ['status' => 400]);
+        }
+
+        $contactData = self::resolve_customer_contact((int) $org, $body);
+        if (is_wp_error($contactData)) {
+            return $contactData;
+        }
+
+        $date = sanitize_text_field($body['date'] ?? ($invoice['date'] ?? gmdate('Y-m-d')));
+        $due = self::resolve_due_date(
+            (int) $org,
+            $date,
+            array_key_exists('due_date', $body)
+                ? sanitize_text_field((string) $body['due_date'])
+                : (string) ($invoice['due_date'] ?? '')
+        );
+        $status = strtoupper((string) ($body['status'] ?? ($invoice['status'] ?? 'SENT')));
+        if (!in_array($status, ['DRAFT', 'SENT'], true)) {
+            $status = (string) ($invoice['status'] ?? 'SENT');
+        }
+
+        $templateId = self::resolve_template_id((int) $org);
+        $currency = strtoupper(sanitize_text_field((string) ($body['currency'] ?? ($invoice['currency'] ?? 'INR'))));
+        if ($currency === '') {
+            $currency = 'INR';
+        }
+
+        $totals = self::calculate_totals($items);
+        $previousInvoice = $invoice;
+        $invoicesTable = $wpdb->prefix . 'vy_invoices';
+        $itemsTable = $wpdb->prefix . 'vy_invoice_items';
+        $timestamp = current_time('mysql', true);
+
+        $wpdb->query('START TRANSACTION');
+
+        $updated = $wpdb->update(
+            $invoicesTable,
+            [
+                'contact_id'     => $contactData['contact_id'],
+                'customer_name'  => $contactData['name'],
+                'customer_email' => $contactData['email'],
+                'customer_phone' => $contactData['phone'],
+                'date'           => $date,
+                'due_date'       => $due,
+                'currency'       => $currency,
+                'subtotal'       => $totals['subtotal'],
+                'tax_total'      => $totals['tax_total'],
+                'total'          => $totals['total'],
+                'status'         => $status,
+                'template_id'    => $templateId,
+                'notes'          => wp_kses_post($body['notes'] ?? ($invoice['notes'] ?? '')),
+                'pdf_url'        => null,
+                'updated_at'     => $timestamp,
+            ],
+            [
+                'org_id' => (int) $org,
+                'id'     => (int) $invoice['id'],
+            ],
+            ['%d','%s','%s','%s','%s','%s','%s','%f','%f','%f','%s','%s','%s','%s','%s'],
+            ['%d','%d']
+        );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_invoice_update_failed', 'Failed to update invoice.', ['status' => 500]);
+        }
+
+        $deleted = $wpdb->delete(
+            $itemsTable,
+            [
+                'org_id'     => (int) $org,
+                'invoice_id' => (int) $invoice['id'],
+            ],
+            ['%d', '%d']
+        );
+
+        if ($deleted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_invoice_items_delete_failed', 'Failed to update invoice items.', ['status' => 500]);
+        }
+
+        foreach ($totals['lines'] as $line) {
+            $inserted = $wpdb->insert(
+                $itemsTable,
+                [
+                    'org_id'     => (int) $org,
+                    'invoice_id' => (int) $invoice['id'],
+                    'description'=> $line['description'],
+                    'quantity'   => $line['quantity'],
+                    'unit_price' => $line['unit_price'],
+                    'tax_rate'   => $line['tax_rate'],
+                    'tax_amount' => $line['tax_amount'],
+                    'tax_type'   => $line['tax_type'],
+                    'line_total' => $line['line_total'],
+                    'created_at' => $timestamp,
+                ],
+                ['%d','%d','%s','%f','%f','%f','%f','%s','%s']
+            );
+
+            if ($inserted === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('vy_invoice_items_insert_failed', 'Failed to save invoice items.', ['status' => 500]);
+            }
+        }
+
+        $wpdb->query('COMMIT');
+
+        $updatedInvoice = array_merge($previousInvoice, [
+            'customer_name'  => $contactData['name'],
+            'customer_email' => $contactData['email'],
+            'customer_phone' => $contactData['phone'],
+            'date'           => $date,
+            'due_date'       => $due,
+            'currency'       => $currency,
+            'subtotal'       => $totals['subtotal'],
+            'tax_total'      => $totals['tax_total'],
+            'total'          => $totals['total'],
+            'status'         => $status,
+            'notes'          => wp_kses_post($body['notes'] ?? ($invoice['notes'] ?? '')),
+        ]);
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            (int) $invoice['id'],
+            'updated',
+            sprintf('Updated invoice %s', (string) ($invoice['invoice_number'] ?? '')),
+            [
+                'lines' => self::build_invoice_update_audit_lines($previousInvoice, $updatedInvoice, count($totals['lines'])),
+            ]
+        );
+
+        return new WP_REST_Response([
+            'id'         => (int) $invoice['id'],
+            'success'    => true,
+            'pdf_url'    => null,
+            'can_edit'   => true,
+            'updated_at' => $timestamp,
+        ], 200);
     }
 
     public static function pay_invoice(WP_REST_Request $request)
@@ -380,7 +581,7 @@ class VyRestInvoices
         }
 
         global $wpdb;
-        $wpdb->insert(
+        $paymentInserted = $wpdb->insert(
             $wpdb->prefix . 'vy_invoice_payments',
             [
                 'org_id'     => $org,
@@ -392,6 +593,7 @@ class VyRestInvoices
             ],
             ['%d','%d','%d','%f','%s','%s']
         );
+        $paymentId = $paymentInserted === false ? 0 : (int) $wpdb->insert_id;
 
         $paidTotal = self::get_paid_amount($invoice['id']);
         $status = self::determine_invoice_status($invoice['status'], (float) $invoice['total'], $paidTotal);
@@ -403,9 +605,30 @@ class VyRestInvoices
             ['%d']
         );
 
+        if ($paymentId > 0) {
+            RecordAuditLogger::log(
+                (int) $org,
+                'payment',
+                $paymentId,
+                'recorded',
+                sprintf('Recorded payment of %s', RecordAuditLogger::money($amount, (string) ($invoice['currency'] ?? 'INR'))),
+                [
+                    'lines' => [
+                        'Invoice: ' . (string) ($invoice['invoice_number'] ?? '—'),
+                        'Payment date: ' . (string) ($body['date'] ?? gmdate('Y-m-d')),
+                        'Journal: #' . (int) $journalResult,
+                        'Balance due: ' . RecordAuditLogger::money(max(0, (float) $invoice['total'] - $paidTotal), (string) ($invoice['currency'] ?? 'INR')),
+                    ],
+                ],
+                'invoice',
+                (int) $invoice['id']
+            );
+        }
+
         return new WP_REST_Response([
             'success'        => true,
             'invoice_id'     => $invoice['id'],
+            'payment_id'     => $paymentId > 0 ? $paymentId : null,
             'journal_id'     => $journalResult,
             'paid_amount'    => $paidTotal,
             'balance_due'    => max(0, (float) $invoice['total'] - $paidTotal),
@@ -446,6 +669,87 @@ class VyRestInvoices
 
         $rows = $wpdb->get_col($wpdb->prepare($sql, ...$params));
         return new WP_REST_Response(['data' => $rows ?: []], 200);
+    }
+
+    public static function list_payments(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_invoice_payments';
+        $where = ['org_id = %d'];
+        $params = [(int) $org];
+
+        $from = sanitize_text_field((string) ($request->get_param('from') ?? ''));
+        if ($from !== '') {
+            $where[] = 'date >= %s';
+            $params[] = $from;
+        }
+
+        $to = sanitize_text_field((string) ($request->get_param('to') ?? ''));
+        if ($to !== '') {
+            $where[] = 'date <= %s';
+            $params[] = $to;
+        }
+
+        $invoiceId = (int) ($request->get_param('invoice_id') ?? 0);
+        if ($invoiceId > 0) {
+            $where[] = 'invoice_id = %d';
+            $params[] = $invoiceId;
+        }
+
+        $page = max(1, (int) ($request->get_param('page') ?? 1));
+        $per_page = min(100, max(1, (int) ($request->get_param('per_page') ?? 20)));
+        $offset = ($page - 1) * $per_page;
+
+        $whereSql = implode(' AND ', $where);
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, invoice_id, journal_id, amount, date, created_at
+             FROM {$table}
+             WHERE {$whereSql}
+             ORDER BY date DESC, id DESC
+             LIMIT %d OFFSET %d",
+            ...array_merge($params, [$per_page, $offset])
+        ), ARRAY_A);
+
+        $total = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(1) FROM {$table} WHERE {$whereSql}",
+            ...$params
+        ));
+
+        $data = array_map(function (array $row) use ($org): array {
+            $invoice = self::fetch_invoice((int) $org, (int) ($row['invoice_id'] ?? 0));
+            $account = self::fetch_payment_account_summary((int) $org, !empty($row['journal_id']) ? (int) $row['journal_id'] : 0);
+
+            return [
+                'id'         => (int) ($row['id'] ?? 0),
+                'amount'     => (float) ($row['amount'] ?? 0),
+                'date'       => (string) ($row['date'] ?? ''),
+                'created_at' => (string) ($row['created_at'] ?? ''),
+                'journal_id' => !empty($row['journal_id']) ? (int) $row['journal_id'] : null,
+                'currency'   => (string) ($invoice['currency'] ?? 'INR'),
+                'invoice'    => $invoice ? [
+                    'id'             => (int) ($invoice['id'] ?? 0),
+                    'invoice_number' => (string) ($invoice['invoice_number'] ?? ''),
+                    'customer_name'  => (string) ($invoice['customer_name'] ?? ''),
+                    'status'         => (string) ($invoice['status'] ?? ''),
+                    'balance_due'    => max(0, (float) ($invoice['total'] ?? 0) - self::get_paid_amount((int) ($invoice['id'] ?? 0))),
+                ] : null,
+                'account'    => $account,
+            ];
+        }, $rows ?: []);
+
+        return new WP_REST_Response([
+            'data' => $data,
+            'pagination' => [
+                'page'     => $page,
+                'per_page' => $per_page,
+                'total'    => $total,
+            ],
+        ], 200);
     }
 
     private static function calculate_totals(array $items): array
@@ -651,16 +955,63 @@ class VyRestInvoices
         return $row;
     }
 
+    private static function fetch_invoice_items(int $org_id, int $invoice_id): array
+    {
+        global $wpdb;
+        $items = $wpdb->get_results($wpdb->prepare(
+            "SELECT description, quantity, unit_price, tax_rate, tax_amount, tax_type, line_total
+             FROM {$wpdb->prefix}vy_invoice_items
+             WHERE org_id = %d AND invoice_id = %d",
+            $org_id,
+            $invoice_id
+        ), ARRAY_A);
+
+        return $items ?: [];
+    }
+
     private static function fetch_account_row(int $org_id, int $account_id): ?array
     {
         if ($account_id <= 0) return null;
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, type, sub_type FROM {$wpdb->prefix}vy_accounts WHERE org_id = %d AND id = %d LIMIT 1",
+            "SELECT id, name, type, sub_type FROM {$wpdb->prefix}vy_accounts WHERE org_id = %d AND id = %d LIMIT 1",
             $org_id,
             $account_id
         ), ARRAY_A);
         return $row ?: null;
+    }
+
+    private static function fetch_payment_account_summary(int $org_id, int $journal_id): ?array
+    {
+        if ($journal_id <= 0) {
+            return null;
+        }
+
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT account_id
+             FROM {$wpdb->prefix}vy_journal_lines
+             WHERE org_id = %d AND journal_id = %d AND debit > 0
+             ORDER BY id ASC
+             LIMIT 1",
+            $org_id,
+            $journal_id
+        ), ARRAY_A);
+        if (!$row || empty($row['account_id'])) {
+            return null;
+        }
+
+        $account = self::fetch_account_row($org_id, (int) $row['account_id']);
+        if (!$account) {
+            return null;
+        }
+
+        return [
+            'id'       => (int) ($account['id'] ?? 0),
+            'name'     => (string) ($account['name'] ?? ''),
+            'type'     => (string) ($account['type'] ?? ''),
+            'sub_type' => (string) ($account['sub_type'] ?? ''),
+        ];
     }
 
     private static function determine_invoice_status(string $currentStatus, float $total, float $paid): string
@@ -825,5 +1176,71 @@ class VyRestInvoices
             'date'      => $row['date'],
             'journal_id'=> $row['journal_id'] ? (int) $row['journal_id'] : null,
         ], $rows);
+    }
+
+    private static function build_invoice_update_audit_lines(array $before, array $after, int $itemCount): array
+    {
+        $lines = [];
+
+        self::append_change_line($lines, 'Customer', (string) ($before['customer_name'] ?? ''), (string) ($after['customer_name'] ?? ''));
+        self::append_change_line($lines, 'Invoice date', (string) ($before['date'] ?? ''), (string) ($after['date'] ?? ''));
+        self::append_change_line($lines, 'Due date', (string) ($before['due_date'] ?? ''), (string) ($after['due_date'] ?? ''));
+        self::append_change_line($lines, 'Status', (string) ($before['status'] ?? ''), (string) ($after['status'] ?? ''));
+        self::append_change_line(
+            $lines,
+            'Total',
+            RecordAuditLogger::money((float) ($before['total'] ?? 0), (string) ($before['currency'] ?? 'INR')),
+            RecordAuditLogger::money((float) ($after['total'] ?? 0), (string) ($after['currency'] ?? 'INR'))
+        );
+
+        $notesBefore = trim((string) ($before['notes'] ?? ''));
+        $notesAfter = trim((string) ($after['notes'] ?? ''));
+        if ($notesBefore !== $notesAfter) {
+            $lines[] = $notesAfter === '' ? 'Notes cleared.' : 'Notes updated.';
+        }
+
+        $lines[] = 'Items saved: ' . $itemCount;
+
+        return $lines;
+    }
+
+    private static function log_invoice_email_audit(int $org_id, int $invoice_id, string $invoiceNumber, array $emailResult): void
+    {
+        $recipients = array_filter(array_map(static fn($email): string => sanitize_email((string) $email), (array) ($emailResult['recipients'] ?? [])));
+        $lines = [
+            'Invoice: ' . ($invoiceNumber !== '' ? $invoiceNumber : ('#' . $invoice_id)),
+            'Sent at: ' . (string) ($emailResult['sent_at'] ?? current_time('mysql', true)),
+        ];
+        if ($recipients) {
+            $lines[] = 'Recipients: ' . implode(', ', $recipients);
+        }
+
+        RecordAuditLogger::log(
+            $org_id,
+            'invoice',
+            $invoice_id,
+            'emailed',
+            sprintf('Emailed invoice %s', $invoiceNumber !== '' ? $invoiceNumber : ('#' . $invoice_id)),
+            ['lines' => $lines]
+        );
+    }
+
+    private static function append_change_line(array &$lines, string $label, string $before, string $after): void
+    {
+        $before = trim($before);
+        $after = trim($after);
+        if ($before === $after) {
+            return;
+        }
+
+        $beforeLabel = $before !== '' ? $before : '—';
+        $afterLabel = $after !== '' ? $after : '—';
+        $lines[] = sprintf('%s: %s -> %s', $label, $beforeLabel, $afterLabel);
+    }
+
+    private static function resolve_template_id(int $org_id): string
+    {
+        $settings = vy_fetch_invoice_template_settings($org_id);
+        return \vy_resolve_invoice_template_id($settings);
     }
 }

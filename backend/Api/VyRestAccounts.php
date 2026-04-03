@@ -7,6 +7,7 @@ use WP_REST_Request;
 use WP_REST_Response;
 use WP_REST_Server;
 use KBS\Accounting\VyJournalEngine;
+use KBS\Helpers\OrgHelper;
 
 defined('ABSPATH') || exit;
 
@@ -405,30 +406,43 @@ class VyRestAccounts
 
     public static function require_auth(WP_REST_Request $request): bool|WP_Error
     {
+        $user_id = 0;
+
         if (is_user_logged_in()) {
-            return true;
+            $user_id = get_current_user_id();
+        } else {
+            $token = $request->get_header('X-KBS-Token') ?: $request->get_header('x-kbs-token');
+            if (!$token) {
+                return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
+            }
+
+            global $wpdb;
+            $user_id = (int) $wpdb->get_var($wpdb->prepare(
+                "SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key = 'auth_token' AND meta_value = %s LIMIT 1",
+                $token
+            ));
+            if (!$user_id) {
+                return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
+            }
+
+            $storedToken = (string) get_user_meta($user_id, 'auth_token', true);
+            $expires = (int) get_user_meta($user_id, 'auth_token_expires', true);
+            if (!vy_auth_token_is_active((string) $token, $storedToken, $expires)) {
+                return new WP_Error('unauthorized', 'Session expired. Please login again.', ['status' => 401]);
+            }
+
+            wp_set_current_user($user_id); // ensure capability checks work downstream
         }
 
-        $token = $request->get_header('X-KBS-Token') ?: $request->get_header('x-kbs-token');
-        if (!$token) {
+        if ($user_id <= 0) {
             return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
         }
 
-        global $wpdb;
-        $user_id = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT user_id FROM {$wpdb->usermeta} WHERE meta_key = 'auth_token' AND meta_value = %s LIMIT 1",
-            $token
-        ));
-        if (!$user_id) {
-            return new WP_Error('unauthorized', 'You must be logged in.', ['status' => 401]);
+        $org_id = OrgHelper::resolve_request_org_id($request, $user_id);
+        if (is_wp_error($org_id)) {
+            return $org_id;
         }
 
-        $expires = (int) get_user_meta($user_id, 'auth_token_expires', true);
-        if (!$expires || time() >= $expires) {
-            return new WP_Error('unauthorized', 'Session expired. Please login again.', ['status' => 401]);
-        }
-
-        wp_set_current_user($user_id); // ensure capability checks work downstream
         return true;
     }
 

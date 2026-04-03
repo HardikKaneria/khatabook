@@ -1,9 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createExpense } from "./api";
 import { useExpenses } from "./hooks";
 import ExpensesList from "./ExpensesList.jsx";
 import ExpenseForm from "./ExpenseForm.jsx";
 import { useAccounts } from "../accounts/hooks";
+import { consumeQueryFlag } from "../../utils/locationFlags";
 
 const isMoneyAccount = (acct) => ["BANK", "CASH", "WALLET"].includes((acct?.sub_type || "").toUpperCase());
 const isExpenseAccount = (acct) => (acct?.type || "").toUpperCase() === "EXPENSE";
@@ -17,6 +18,7 @@ export default function ExpensesPage() {
             from: from.toISOString().slice(0, 10),
             to: to.toISOString().slice(0, 10),
             category: "",
+            status: "ACTIVE",
         };
     });
     const [refreshKey, setRefreshKey] = useState(0);
@@ -36,6 +38,12 @@ export default function ExpensesPage() {
 
     const moneyAccounts = useMemo(() => (accounts || []).filter(isMoneyAccount), [accounts]);
     const expenseAccounts = useMemo(() => (accounts || []).filter(isExpenseAccount), [accounts]);
+
+    useEffect(() => {
+        if (consumeQueryFlag("create")) {
+            setShowForm(true);
+        }
+    }, []);
 
     const goToExpense = (id) => {
         window.history.pushState({}, "", `/expenses/${id}`);
@@ -93,6 +101,14 @@ export default function ExpensesPage() {
                             onChange={handleFilterChange("category")}
                             placeholder="All"
                         />
+                    </div>
+                    <div className="field">
+                        <label>Status</label>
+                        <select value={filters.status} onChange={handleFilterChange("status")}>
+                            <option value="ACTIVE">Active</option>
+                            <option value="ARCHIVED">Archived</option>
+                            <option value="ALL">All</option>
+                        </select>
                     </div>
                 </div>
             </section>

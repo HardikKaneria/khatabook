@@ -7,6 +7,8 @@ use WP_REST_Request;
 use WP_REST_Response;
 use WP_REST_Server;
 use KBS\Accounting\VyJournalEngine;
+use KBS\Core\RecordAuditLogger;
+use KBS\Notifications\InternalDocumentNotifier;
 
 defined('ABSPATH') || exit;
 
@@ -29,6 +31,18 @@ class VyRestExpenses
         register_rest_route(VyRestAccounts::NS, '/expenses/(?P<id>\d+)', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [__CLASS__, 'get_expense'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/expenses/(?P<id>\d+)', [
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => [__CLASS__, 'update_expense'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/expenses/(?P<id>\d+)/archive', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'archive_expense'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
     }
@@ -56,6 +70,13 @@ class VyRestExpenses
             $where[] = 'category = %s';
             $params[] = sanitize_text_field($category);
         }
+        $status = strtoupper((string) ($request->get_param('status') ?? ''));
+        if ($status === 'ACTIVE') {
+            $where[] = "status <> 'ARCHIVED'";
+        } elseif ($status === 'ARCHIVED') {
+            $where[] = 'status = %s';
+            $params[] = 'ARCHIVED';
+        }
 
         $page = max(1, (int) ($request->get_param('page') ?? 1));
         $per_page = min(100, max(1, (int) ($request->get_param('per_page') ?? 20)));
@@ -73,26 +94,7 @@ class VyRestExpenses
 
         $contactMap = self::prime_contacts((int) $org, $rows ?: []);
 
-        $payload = array_map(function ($row) use ($contactMap) {
-            $contactId = $row->contact_id ? (int) $row->contact_id : null;
-            return [
-                'id'          => (int) $row->id,
-                'contact_id'  => $contactId,
-                'contact'     => self::format_contact_summary($contactId ? ($contactMap[$contactId] ?? null) : null),
-                'expense_date'=> $row->expense_date,
-                'category'    => $row->category,
-                'payee'       => $row->payee,
-                'description' => $row->description,
-                'amount'      => (float) $row->amount,
-                'currency'    => $row->currency,
-                'gst_rate'    => isset($row->gst_rate) ? (float) $row->gst_rate : 0.0,
-                'gst_amount'  => isset($row->gst_amount) ? (float) $row->gst_amount : 0.0,
-                'gst_type'    => $row->gst_type ?? 'GST',
-                'is_gst_input_eligible' => isset($row->is_gst_input_eligible) ? (bool) $row->is_gst_input_eligible : true,
-                'status'      => $row->status,
-                'journal_id'  => $row->payment_journal_id ? (int) $row->payment_journal_id : null,
-            ];
-        }, $rows ?: []);
+        $payload = array_map(fn($row) => self::format_expense_payload((array) $row, $contactMap), $rows ?: []);
 
         return new WP_REST_Response([
             'data' => $payload,
@@ -202,6 +204,28 @@ class VyRestExpenses
             );
         }
 
+        RecordAuditLogger::log(
+            (int) $org,
+            'expense',
+            $expense_id,
+            'created',
+            sprintf('Created expense %s', $category),
+            [
+                'lines' => [
+                    'Payee: ' . ($contactData['name'] ?: 'Vendor'),
+                    'Amount: ' . RecordAuditLogger::money($amount, strtoupper((string) ($body['currency'] ?? 'INR'))),
+                    'GST: ' . ($gstRate > 0 ? rtrim(rtrim(number_format($gstRate, 2, '.', ''), '0'), '.') . '%' : 'No GST'),
+                    $journalId ? ('Payment journal: #' . $journalId) : 'Payment journal: not recorded',
+                ],
+            ]
+        );
+
+        try {
+            InternalDocumentNotifier::notify_expense_created((int) $org, $expense_id);
+        } catch (\Throwable $throwable) {
+            error_log(sprintf('[Vyavhar Email] Internal expense notification failed for expense %d: %s', $expense_id, $throwable->getMessage()));
+        }
+
         return new WP_REST_Response(['id' => $expense_id, 'payment_journal_id' => $journalId], 201);
     }
 
@@ -210,27 +234,144 @@ class VyRestExpenses
         $org = \vy_get_current_org_id();
         if (is_wp_error($org)) return $org;
 
-        global $wpdb;
-        $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT * FROM {$wpdb->prefix}vy_expenses WHERE org_id = %d AND id = %d LIMIT 1",
-            $org,
-            (int) $request['id']
-        ), ARRAY_A);
+        return self::get_expense_response((int) $org, (int) $request['id']);
+    }
 
-        if (!$row) {
+    public static function update_expense(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) return $org;
+
+        $expense = self::fetch_expense((int) $org, (int) $request['id']);
+        if (!$expense) {
             return new WP_Error('vy_not_found', 'Expense not found.', ['status' => 404]);
         }
 
-        $row['amount'] = (float) $row['amount'];
-        $row['payment_journal_id'] = $row['payment_journal_id'] ? (int) $row['payment_journal_id'] : null;
-        $row['gst_rate'] = isset($row['gst_rate']) ? (float) $row['gst_rate'] : 0.0;
-        $row['gst_amount'] = isset($row['gst_amount']) ? (float) $row['gst_amount'] : 0.0;
-        $row['is_gst_input_eligible'] = isset($row['is_gst_input_eligible']) ? (bool) $row['is_gst_input_eligible'] : true;
-        $row['contact_id'] = $row['contact_id'] ? (int) $row['contact_id'] : null;
-        if ($row['contact_id']) {
-            $row['contact'] = self::format_contact_summary(self::fetch_contact((int) $org, $row['contact_id']));
+        $editState = vy_expense_edit_state($expense);
+        if (!$editState['can_edit']) {
+            return new WP_Error('vy_expense_locked', $editState['edit_reason'] ?: 'This expense can no longer be edited.', ['status' => 400]);
         }
-        return new WP_REST_Response($row, 200);
+
+        global $wpdb;
+        $body = $request->get_json_params() ?: [];
+        $category = sanitize_text_field($body['category'] ?? $expense['category'] ?? '');
+        $amount = array_key_exists('amount', $body) ? (float) $body['amount'] : (float) ($expense['amount'] ?? 0);
+        if ($category === '' || $amount <= 0) {
+            return new WP_Error('vy_bad_expense', 'Category and positive amount are required.', ['status' => 400]);
+        }
+
+        $body['payee'] = sanitize_text_field($body['payee'] ?? ($expense['payee'] ?? ''));
+        $body['contact_id'] = array_key_exists('contact_id', $body)
+            ? (int) $body['contact_id']
+            : (int) ($expense['contact_id'] ?? 0);
+        $contactData = self::resolve_vendor_contact((int) $org, $body);
+        if (is_wp_error($contactData)) {
+            return $contactData;
+        }
+
+        $previousExpense = $expense;
+
+        $gstRate = array_key_exists('gst_rate', $body)
+            ? max(0, (float) $body['gst_rate'])
+            : (float) ($expense['gst_rate'] ?? 0);
+        $gstAmount = $gstRate > 0 ? round($amount * $gstRate / 100, 2) : 0.0;
+        $gstType = sanitize_text_field($body['gst_type'] ?? ($expense['gst_type'] ?? 'GST'));
+        $gstEligible = array_key_exists('is_gst_input_eligible', $body)
+            ? (int) (bool) $body['is_gst_input_eligible']
+            : (int) ($expense['is_gst_input_eligible'] ?? 1);
+
+        $wpdb->update(
+            $wpdb->prefix . 'vy_expenses',
+            [
+                'contact_id'    => $contactData['contact_id'],
+                'expense_date'  => sanitize_text_field($body['expense_date'] ?? ($expense['expense_date'] ?? gmdate('Y-m-d'))),
+                'category'      => $category,
+                'payee'         => $contactData['name'],
+                'description'   => array_key_exists('description', $body)
+                    ? wp_kses_post($body['description'] ?? '')
+                    : ($expense['description'] ?? ''),
+                'amount'        => $amount,
+                'currency'      => strtoupper($body['currency'] ?? ($expense['currency'] ?? 'INR')),
+                'gst_rate'      => $gstRate,
+                'gst_amount'    => $gstAmount,
+                'gst_type'      => $gstType,
+                'is_gst_input_eligible' => $gstEligible,
+                'updated_at'    => current_time('mysql', true),
+            ],
+            ['org_id' => $org, 'id' => (int) $expense['id']],
+            ['%d','%s','%s','%s','%s','%f','%s','%f','%f','%s','%d','%s'],
+            ['%d','%d']
+        );
+
+        $updatedExpense = array_merge($previousExpense, [
+            'contact_id'            => $contactData['contact_id'],
+            'expense_date'          => sanitize_text_field($body['expense_date'] ?? ($expense['expense_date'] ?? gmdate('Y-m-d'))),
+            'category'              => $category,
+            'payee'                 => $contactData['name'],
+            'description'           => array_key_exists('description', $body)
+                ? wp_kses_post($body['description'] ?? '')
+                : ($expense['description'] ?? ''),
+            'amount'                => $amount,
+            'currency'              => strtoupper($body['currency'] ?? ($expense['currency'] ?? 'INR')),
+            'gst_rate'              => $gstRate,
+            'gst_amount'            => $gstAmount,
+            'gst_type'              => $gstType,
+            'is_gst_input_eligible' => $gstEligible,
+        ]);
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'expense',
+            (int) $expense['id'],
+            'updated',
+            sprintf('Updated expense %s', (string) ($expense['category'] ?? '')),
+            [
+                'lines' => self::build_expense_update_audit_lines($previousExpense, $updatedExpense),
+            ]
+        );
+
+        return self::get_expense_response((int) $org, (int) $expense['id']);
+    }
+
+    public static function archive_expense(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) return $org;
+
+        $expense = self::fetch_expense((int) $org, (int) $request['id']);
+        if (!$expense) {
+            return new WP_Error('vy_not_found', 'Expense not found.', ['status' => 404]);
+        }
+
+        $editState = vy_expense_edit_state($expense);
+        if (!$editState['can_archive']) {
+            return new WP_Error('vy_expense_archive_locked', $editState['archive_reason'] ?: 'This expense can no longer be archived.', ['status' => 400]);
+        }
+
+        global $wpdb;
+        $wpdb->update(
+            $wpdb->prefix . 'vy_expenses',
+            ['status' => 'ARCHIVED', 'updated_at' => current_time('mysql', true)],
+            ['org_id' => $org, 'id' => (int) $expense['id']],
+            ['%s','%s'],
+            ['%d','%d']
+        );
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'expense',
+            (int) $expense['id'],
+            'archived',
+            sprintf('Archived expense %s', (string) ($expense['category'] ?? '')),
+            [
+                'lines' => [
+                    'Payee: ' . (string) ($expense['payee'] ?? '—'),
+                    'Amount: ' . RecordAuditLogger::money((float) ($expense['amount'] ?? 0), (string) ($expense['currency'] ?? 'INR')),
+                ],
+            ]
+        );
+
+        return new WP_REST_Response(['success' => true, 'action' => 'archived'], 200);
     }
 
     private static function ensure_default_expense_account(int $org_id): int
@@ -373,5 +514,105 @@ class VyRestExpenses
             $map[$row['id']] = $row;
         }
         return $map;
+    }
+
+    private static function fetch_expense(int $org_id, int $expense_id): ?array
+    {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$wpdb->prefix}vy_expenses WHERE org_id = %d AND id = %d LIMIT 1",
+            $org_id,
+            $expense_id
+        ), ARRAY_A);
+
+        return $row ?: null;
+    }
+
+    private static function get_expense_response(int $org_id, int $expense_id)
+    {
+        $expense = self::fetch_expense($org_id, $expense_id);
+        if (!$expense) {
+            return new WP_Error('vy_not_found', 'Expense not found.', ['status' => 404]);
+        }
+
+        $contactMap = [];
+        if (!empty($expense['contact_id'])) {
+            $contactMap[(int) $expense['contact_id']] = self::fetch_contact($org_id, (int) $expense['contact_id']);
+        }
+        $payload = self::format_expense_payload($expense, $contactMap);
+        $payload['history'] = RecordAuditLogger::list_for_record($org_id, 'expense', $expense_id);
+
+        return new WP_REST_Response($payload, 200);
+    }
+
+    private static function format_expense_payload(array $row, array $contactMap = []): array
+    {
+        $contactId = !empty($row['contact_id']) ? (int) $row['contact_id'] : null;
+        $contact = $contactId ? ($contactMap[$contactId] ?? null) : null;
+        $editState = vy_expense_edit_state($row);
+
+        return [
+            'id'          => (int) $row['id'],
+            'contact_id'  => $contactId,
+            'contact'     => self::format_contact_summary($contact),
+            'expense_date'=> $row['expense_date'] ?? null,
+            'category'    => $row['category'] ?? '',
+            'payee'       => $row['payee'] ?? '',
+            'description' => $row['description'] ?? '',
+            'amount'      => (float) ($row['amount'] ?? 0),
+            'currency'    => $row['currency'] ?? 'INR',
+            'gst_rate'    => isset($row['gst_rate']) ? (float) $row['gst_rate'] : 0.0,
+            'gst_amount'  => isset($row['gst_amount']) ? (float) $row['gst_amount'] : 0.0,
+            'gst_type'    => $row['gst_type'] ?? 'GST',
+            'is_gst_input_eligible' => isset($row['is_gst_input_eligible']) ? (bool) $row['is_gst_input_eligible'] : true,
+            'status'      => $row['status'] ?? 'POSTED',
+            'payment_journal_id' => !empty($row['payment_journal_id']) ? (int) $row['payment_journal_id'] : null,
+            'journal_id'  => !empty($row['payment_journal_id']) ? (int) $row['payment_journal_id'] : null,
+            'can_edit'    => $editState['can_edit'],
+            'can_archive' => $editState['can_archive'],
+            'edit_block_reason' => $editState['edit_reason'],
+            'archive_block_reason' => $editState['archive_reason'],
+        ];
+    }
+
+    private static function build_expense_update_audit_lines(array $before, array $after): array
+    {
+        $lines = [];
+
+        self::append_change_line($lines, 'Category', (string) ($before['category'] ?? ''), (string) ($after['category'] ?? ''));
+        self::append_change_line($lines, 'Payee', (string) ($before['payee'] ?? ''), (string) ($after['payee'] ?? ''));
+        self::append_change_line($lines, 'Expense date', (string) ($before['expense_date'] ?? ''), (string) ($after['expense_date'] ?? ''));
+        self::append_change_line(
+            $lines,
+            'Amount',
+            RecordAuditLogger::money((float) ($before['amount'] ?? 0), (string) ($before['currency'] ?? 'INR')),
+            RecordAuditLogger::money((float) ($after['amount'] ?? 0), (string) ($after['currency'] ?? 'INR'))
+        );
+        self::append_change_line($lines, 'GST rate', (string) ($before['gst_rate'] ?? '0'), (string) ($after['gst_rate'] ?? '0'));
+
+        $beforeDescription = trim((string) ($before['description'] ?? ''));
+        $afterDescription = trim((string) ($after['description'] ?? ''));
+        if ($beforeDescription !== $afterDescription) {
+            $lines[] = $afterDescription === '' ? 'Description cleared.' : 'Description updated.';
+        }
+
+        if (!$lines) {
+            $lines[] = 'Expense details were saved again without a visible field change.';
+        }
+
+        return $lines;
+    }
+
+    private static function append_change_line(array &$lines, string $label, string $before, string $after): void
+    {
+        $before = trim($before);
+        $after = trim($after);
+        if ($before === $after) {
+            return;
+        }
+
+        $beforeLabel = $before !== '' ? $before : '—';
+        $afterLabel = $after !== '' ? $after : '—';
+        $lines[] = sprintf('%s: %s -> %s', $label, $beforeLabel, $afterLabel);
     }
 }

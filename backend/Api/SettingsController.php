@@ -519,7 +519,16 @@ class SettingsController
                     'padding'        => ['type' => 'integer'],
                     'reset_cycle'    => ['type' => 'string'],
                     'default_terms'  => ['type' => 'string'],
+                    'default_due_days' => ['type' => 'integer'],
                     'round_off'      => ['type' => 'number'],
+                ],
+                'additionalProperties' => true,
+            ],
+            'tax' => [
+                'type' => 'object',
+                'properties' => [
+                    'gst_type'        => ['type' => 'string'],
+                    'income_tax_rate' => ['type' => 'number'],
                 ],
                 'additionalProperties' => true,
             ],

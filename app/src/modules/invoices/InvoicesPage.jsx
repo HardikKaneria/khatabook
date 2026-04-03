@@ -1,8 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createInvoice } from "./api";
 import { useInvoices } from "./hooks";
 import InvoiceList from "./InvoiceList.jsx";
 import InvoiceForm from "./InvoiceForm.jsx";
+import { consumeQueryFlag } from "../../utils/locationFlags";
 
 export default function InvoicesPage() {
     const [filters, setFilters] = useState({ status: "", customer_name: "" });
@@ -19,6 +20,12 @@ export default function InvoicesPage() {
         if (Array.isArray(data?.records)) return data.records;
         return [];
     }, [data]);
+
+    useEffect(() => {
+        if (consumeQueryFlag("create")) {
+            setShowForm(true);
+        }
+    }, []);
 
     const goToInvoice = (id) => {
         window.history.pushState({}, "", `/invoices/${id}`);

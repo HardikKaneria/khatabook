@@ -2,6 +2,10 @@
 
 namespace KBS\User;
 
+/**
+ * Transitional user-status helper.
+ * The current app still uses approval meta checks here, but pending-user admin flows now run through dedicated controllers.
+ */
 class UserManager
 {
 

@@ -11,6 +11,13 @@ defined('ABSPATH') || exit;
 
 class VyRestInvoiceSettings
 {
+    private const MAX_LOGO_BYTES = 2097152;
+    private const ALLOWED_LOGO_MIMES = [
+        'image/jpeg',
+        'image/png',
+        'image/webp',
+    ];
+
     public static function register_routes(): void
     {
         register_rest_route(VyRestAccounts::NS, '/invoice-settings', [
@@ -22,7 +29,19 @@ class VyRestInvoiceSettings
         register_rest_route(VyRestAccounts::NS, '/invoice-settings', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [__CLASS__, 'save_settings'],
-            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+            'permission_callback' => [__CLASS__, 'can_manage_settings'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoice-settings/logo', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'upload_logo'],
+            'permission_callback' => [__CLASS__, 'can_manage_settings'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoice-settings/logo', [
+            'methods'             => WP_REST_Server::DELETABLE,
+            'callback'            => [__CLASS__, 'delete_logo'],
+            'permission_callback' => [__CLASS__, 'can_manage_settings'],
         ]);
     }
 
@@ -95,6 +114,144 @@ class VyRestInvoiceSettings
         ], 200);
     }
 
+    public static function upload_logo(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $files = $request->get_file_params();
+        $logoFile = $files['logo'] ?? null;
+        if (!is_array($logoFile) || empty($logoFile['tmp_name'])) {
+            return new WP_Error('vy_logo_missing', 'Upload a PNG, JPG, or WEBP logo.', ['status' => 400]);
+        }
+
+        if (($logoFile['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            return new WP_Error('vy_logo_upload_failed', 'Logo upload failed. Try again with a valid image file.', ['status' => 400]);
+        }
+
+        $fileSize = (int) ($logoFile['size'] ?? 0);
+        if ($fileSize <= 0) {
+            return new WP_Error('vy_logo_empty', 'The uploaded logo file is empty.', ['status' => 400]);
+        }
+
+        if ($fileSize > self::MAX_LOGO_BYTES) {
+            return new WP_Error('vy_logo_too_large', 'Logo must be 2 MB or smaller.', ['status' => 400]);
+        }
+
+        $typeCheck = wp_check_filetype_and_ext((string) $logoFile['tmp_name'], (string) $logoFile['name']);
+        $mimeType = (string) ($typeCheck['type'] ?? '');
+        if (!in_array($mimeType, self::ALLOWED_LOGO_MIMES, true)) {
+            return new WP_Error('vy_logo_invalid_type', 'Only PNG, JPG, and WEBP logo files are allowed.', ['status' => 400]);
+        }
+
+        require_once ABSPATH . 'wp-admin/includes/file.php';
+        require_once ABSPATH . 'wp-admin/includes/image.php';
+        require_once ABSPATH . 'wp-admin/includes/media.php';
+
+        $upload = wp_handle_upload($logoFile, [
+            'test_form' => false,
+            'mimes'     => [
+                'jpg|jpeg' => 'image/jpeg',
+                'png'      => 'image/png',
+                'webp'     => 'image/webp',
+            ],
+        ]);
+
+        if (!is_array($upload) || !empty($upload['error']) || empty($upload['file']) || empty($upload['url'])) {
+            return new WP_Error('vy_logo_store_failed', 'Unable to store the uploaded logo.', ['status' => 500]);
+        }
+
+        $attachmentId = wp_insert_attachment([
+            'post_mime_type' => $upload['type'] ?? $mimeType,
+            'post_title'     => sanitize_file_name(pathinfo((string) $logoFile['name'], PATHINFO_FILENAME)),
+            'post_content'   => '',
+            'post_status'    => 'inherit',
+        ], $upload['file']);
+
+        if (!$attachmentId || is_wp_error($attachmentId)) {
+            @unlink($upload['file']);
+            return new WP_Error('vy_logo_attachment_failed', 'Unable to register the uploaded logo.', ['status' => 500]);
+        }
+
+        $metadata = wp_generate_attachment_metadata($attachmentId, $upload['file']);
+        if (is_array($metadata)) {
+            wp_update_attachment_metadata($attachmentId, $metadata);
+        }
+        update_post_meta($attachmentId, '_vy_invoice_logo_org_id', (int) $org);
+        update_post_meta($attachmentId, '_vy_invoice_logo_managed', 1);
+
+        $current = self::get_or_create_settings((int) $org);
+        $newLogoUrl = esc_url_raw((string) $upload['url']);
+
+        global $wpdb;
+        $result = $wpdb->update(
+            self::get_table(),
+            [
+                'logo_url'   => $newLogoUrl,
+                'updated_at' => current_time('mysql', true),
+            ],
+            ['org_id' => (int) $org],
+            ['%s', '%s'],
+            ['%d']
+        );
+
+        if ($result === false) {
+            wp_delete_attachment($attachmentId, true);
+            return new WP_Error('vy_logo_settings_failed', 'Logo was uploaded but invoice settings could not be updated.', ['status' => 500]);
+        }
+
+        $previousLogoUrl = (string) ($current['logo_url'] ?? '');
+        if ($previousLogoUrl !== '' && $previousLogoUrl !== $newLogoUrl) {
+            self::maybe_delete_managed_logo($previousLogoUrl, (int) $org);
+        }
+
+        $settings = self::get_or_create_settings((int) $org);
+
+        return new WP_REST_Response([
+            'logo_url'  => $settings['logo_url'],
+            'settings'  => self::format_settings($settings),
+            'templates' => array_values(vy_get_invoice_templates_registry()),
+        ], 200);
+    }
+
+    public static function delete_logo(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $current = self::get_or_create_settings((int) $org);
+        $currentLogoUrl = (string) ($current['logo_url'] ?? '');
+
+        global $wpdb;
+        $result = $wpdb->update(
+            self::get_table(),
+            [
+                'logo_url'   => null,
+                'updated_at' => current_time('mysql', true),
+            ],
+            ['org_id' => (int) $org],
+            ['%s', '%s'],
+            ['%d']
+        );
+
+        if ($result === false) {
+            return new WP_Error('vy_logo_remove_failed', 'Unable to remove the current invoice logo.', ['status' => 500]);
+        }
+
+        self::maybe_delete_managed_logo($currentLogoUrl, (int) $org);
+        $settings = self::get_or_create_settings((int) $org);
+
+        return new WP_REST_Response([
+            'logo_url'  => null,
+            'settings'  => self::format_settings($settings),
+            'templates' => array_values(vy_get_invoice_templates_registry()),
+        ], 200);
+    }
+
     private static function get_or_create_settings(int $org_id): array
     {
         $existing = self::get_settings_row($org_id);
@@ -150,13 +307,53 @@ class VyRestInvoiceSettings
         ];
     }
 
+    public static function can_manage_settings(WP_REST_Request $request): bool|WP_Error
+    {
+        $auth = VyRestAccounts::require_auth($request);
+        if (is_wp_error($auth)) {
+            return $auth;
+        }
+
+        $userId = get_current_user_id();
+        $orgId = \vy_get_current_org_id();
+        if (is_wp_error($orgId)) {
+            return $orgId;
+        }
+
+        $role = \KBS\Helpers\OrgHelper::user_role_for_org((int) $userId, (int) $orgId);
+        if (in_array($role, ['administrator', 'company_admin', 'c_manager'], true)) {
+            return true;
+        }
+
+        return new WP_Error('vy_settings_forbidden', 'You do not have permission to manage invoice settings.', ['status' => 403]);
+    }
+
     private static function sanitize_nullable_url(array $body, string $key, ?string $fallback): ?string
     {
         if (!array_key_exists($key, $body)) {
             return $fallback;
         }
         $value = trim((string) $body[$key]);
-        return $value === '' ? null : esc_url_raw($value);
+        if ($value === '') {
+            return null;
+        }
+
+        $sanitized = esc_url_raw($value);
+        if ($sanitized === '') {
+            return $fallback;
+        }
+
+        if ($fallback && $sanitized === $fallback) {
+            return $sanitized;
+        }
+
+        $siteHost = wp_parse_url(home_url('/'), PHP_URL_HOST);
+        $valueHost = wp_parse_url($sanitized, PHP_URL_HOST);
+        if (is_string($siteHost) && is_string($valueHost) && strtolower($siteHost) === strtolower($valueHost)) {
+            return $sanitized;
+        }
+
+        return $fallback;
     }
 
     private static function sanitize_nullable_text(array $body, string $key, ?string $fallback): ?string
@@ -183,5 +380,24 @@ class VyRestInvoiceSettings
             return $fallback;
         }
         return (int) ((!empty($body[$key]) && $body[$key] !== '0'));
+    }
+
+    private static function maybe_delete_managed_logo(?string $logoUrl, int $orgId): void
+    {
+        $logoUrl = trim((string) $logoUrl);
+        if ($logoUrl === '') {
+            return;
+        }
+
+        $attachmentId = attachment_url_to_postid($logoUrl);
+        if ($attachmentId <= 0) {
+            return;
+        }
+
+        $managed = (int) get_post_meta($attachmentId, '_vy_invoice_logo_managed', true) === 1;
+        $managedOrgId = (int) get_post_meta($attachmentId, '_vy_invoice_logo_org_id', true);
+        if ($managed && $managedOrgId === $orgId) {
+            wp_delete_attachment($attachmentId, true);
+        }
     }
 }

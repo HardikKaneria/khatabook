@@ -64,11 +64,13 @@ class VyRestReports
         $summary = vy_get_gst_summary((int) $org, $from, $to);
 
         return new WP_REST_Response([
-            'from'            => $from,
-            'to'              => $to,
-            'output_tax'      => $summary['output_tax'],
-            'input_tax'       => $summary['input_tax'],
-            'net_gst_payable' => $summary['net_gst_payable'],
+            'from'              => $from,
+            'to'                => $to,
+            'output_tax'        => $summary['output_tax'],
+            'input_tax'         => $summary['input_tax'],
+            'net_gst_payable'   => $summary['net_gst_payable'],
+            'is_gst_registered' => $summary['is_gst_registered'] ?? true,
+            'gst_type'          => $summary['gst_type'] ?? 'regular',
         ], 200);
     }
 

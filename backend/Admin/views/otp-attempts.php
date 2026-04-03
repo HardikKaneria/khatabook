@@ -74,16 +74,17 @@ AdminPage::render_page_start(
 				$context = AdminPage::value($row, ['context'], 'Not set');
 				$ip_address = AdminPage::value($row, ['ip', 'ip_address'], 'Not captured');
 				$recorded_at = AdminPage::format_datetime(AdminPage::value($row, ['created_at', 'logged_at'], ''));
-				$otp_code = AdminPage::value($row, ['otp_code'], 'Not stored');
+				$otp_code = AdminPage::value($row, ['otp_code'], 'Redacted');
 				$badge_tone = [
 					'sent' => 'info',
 					'verified' => 'success',
 					'failed' => 'danger',
 				][$status] ?? 'neutral';
 
-				if ($otp_code !== 'Not stored' && $otp_code !== '******') {
-					$visible = substr($otp_code, -2);
-					$otp_code = str_repeat('*', max(strlen($otp_code) - 2, 0)) . $visible;
+				if ($otp_code === '******') {
+					$otp_code = 'Redacted';
+				} elseif ($otp_code !== 'Redacted') {
+					$otp_code = 'Redacted';
 				}
 				?>
 				<article class="kbs-record">
@@ -105,7 +106,7 @@ AdminPage::render_page_start(
 					?>
 
 					<div class="kbs-record__details">
-						<span class="kbs-record__details-label">Stored OTP</span>
+						<span class="kbs-record__details-label">OTP Storage</span>
 						<p class="kbs-record__details-text"><?php echo esc_html($otp_code); ?></p>
 					</div>
 				</article>

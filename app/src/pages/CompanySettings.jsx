@@ -1,13 +1,12 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import {
+    Alert,
     Anchor,
     Button,
     Card,
     Col,
     ConfigProvider,
-    Divider,
     Form,
-    Grid,
     Input,
     InputNumber,
     Row,
@@ -23,8 +22,6 @@ import PageHeader from "../components/ui/PageHeader.jsx";
 import PrimaryButton from "../components/ui/PrimaryButton.jsx";
 
 // ---------------------------------------------------------------------------
-const { useBreakpoint } = Grid;
-
 // --------------------------- Defaults --------------------------------------
 const DEFAULTS = {
     company: {
@@ -51,49 +48,11 @@ const DEFAULTS = {
     },
     tax: {
         gst_type: "regular",
-        enable_einvoice: false,
-        enable_eway: false,
-        tds_enabled: false,
-    },
-    payments: {
-        upi_id: "",
-        bank_name: "",
-        account_number: "",
-        ifsc: "",
-        gateways: { razorpay: false, stripe: false },
-    },
-    inventory: {
-        enabled: true,
-        valuation: "FIFO",
-        low_stock_alert: true,
-        batch_expiry: false,
-    },
-    docs: {
-        paper_size: "A4",
-        header_html: "",
-        footer_html: "",
-        terms_invoice: "",
-        signature_url: "",
-    },
-    notify: {
-        channels: { email: true, sms: false, whatsapp: true },
-        triggers: {
-            invoice_created: true,
-            payment_received: true,
-            low_stock: true,
-            approval_request: true,
-        },
-        integrations: { whatsapp_business: false, tally_export: true, webhooks: false },
-    },
-    security: {
-        export_import_enabled: true,
-        period_lock: false,
-        period_lock_upto: "",
-        two_factor: false,
-        session_timeout_minutes: 60,
-        audit_log_enabled: true,
+        income_tax_rate: 25,
     },
 };
+
+const ACTIVE_CATEGORIES = ["company", "sales", "tax"];
 
 // ------------------------ Helpers ------------------------------------------
 const isObj = (v) => v && typeof v === "object" && !Array.isArray(v);
@@ -269,7 +228,7 @@ export default function SettingsAntD() {
     useEffect(() => {
         if (!auth) return;                 // wait until auth is resolved
         if (!orgId) {
-            console.error("[AUTH] No orgId. Raw auth:", auth);
+            console.error("[AUTH] No orgId available for company settings.");
             message.error("Your account is missing an organization. Please re-login or contact support.");
             setLoading(false);
             return;
@@ -323,7 +282,7 @@ export default function SettingsAntD() {
         setSavingAll(true);
         try {
             const batch = {};
-            Object.keys(DEFAULTS).forEach((cat) => {
+            ACTIVE_CATEGORIES.forEach((cat) => {
                 batch[cat] = withDefaults(cat);
             });
             const resp = await saveAll(orgId, batch, versions);
@@ -340,13 +299,8 @@ export default function SettingsAntD() {
     const anchorItems = useMemo(
         () => [
             { key: "company", href: "#company", title: "Company & Organization" },
-            { key: "sales", href: "#sales", title: "Sales & Purchases" },
+            { key: "sales", href: "#sales", title: "Invoice Defaults" },
             { key: "tax", href: "#tax", title: "Taxes & Compliance" },
-            { key: "payments", href: "#payments", title: "Payments & Banking" },
-            { key: "inventory", href: "#inventory", title: "Inventory" },
-            { key: "docs", href: "#docs", title: "Documents & Branding" },
-            { key: "notify", href: "#notify", title: "Notifications & Integrations" },
-            { key: "security", href: "#security", title: "Data & Security" },
         ],
         []
     );
@@ -379,6 +333,12 @@ export default function SettingsAntD() {
                     {/* Main content */}
                     <Col xs={24} lg={15} xl={16} xxl={17}>
                         <Space direction="vertical" size={20} style={{ display: "flex" }}>
+                            <Alert
+                                type="info"
+                                showIcon
+                                message="This page only shows company, invoice-default, and tax settings that the current app actively uses."
+                                description="Invoice templates, logo upload, footer text, bank details, QR, and other document presentation settings live in Invoice Settings. Placeholder areas for banking, inventory, notifications, and security are intentionally hidden until they are wired to live modules."
+                            />
                             {/* Sections */}
                         <CompanySection
                             loading={loading}
@@ -402,46 +362,6 @@ export default function SettingsAntD() {
                             onChange={(v) => setData((d) => ({ ...d, tax: v }))}
                             onSave={() => onSave("tax")}
                             saving={!!saving.tax}
-                            disabled={!data || loading}
-                        />
-                        <PaymentsSection
-                            loading={loading}
-                            value={withDefaults("payments")}
-                            onChange={(v) => setData((d) => ({ ...d, payments: v }))}
-                            onSave={() => onSave("payments")}
-                            saving={!!saving.payments}
-                            disabled={!data || loading}
-                        />
-                        <InventorySection
-                            loading={loading}
-                            value={withDefaults("inventory")}
-                            onChange={(v) => setData((d) => ({ ...d, inventory: v }))}
-                            onSave={() => onSave("inventory")}
-                            saving={!!saving.inventory}
-                            disabled={!data || loading}
-                        />
-                        <DocsSection
-                            loading={loading}
-                            value={withDefaults("docs")}
-                            onChange={(v) => setData((d) => ({ ...d, docs: v }))}
-                            onSave={() => onSave("docs")}
-                            saving={!!saving.docs}
-                            disabled={!data || loading}
-                        />
-                        <NotifySection
-                            loading={loading}
-                            value={withDefaults("notify")}
-                            onChange={(v) => setData((d) => ({ ...d, notify: v }))}
-                            onSave={() => onSave("notify")}
-                            saving={!!saving.notify}
-                            disabled={!data || loading}
-                        />
-                        <SecuritySection
-                            loading={loading}
-                            value={withDefaults("security")}
-                            onChange={(v) => setData((d) => ({ ...d, security: v }))}
-                            onSave={() => onSave("security")}
-                            saving={!!saving.security}
                             disabled={!data || loading}
                         />
                     </Space>
@@ -486,6 +406,9 @@ function CompanySection({ value, onChange, onSave, saving, loading, disabled }) 
         >
             {!loading && (
                 <Form form={form} layout="vertical" onValuesChange={onValuesChange}>
+                    <p style={{ marginTop: 0, color: "var(--kb-color-text-secondary)" }}>
+                        These values are used in reports and invoice headers. Invoice template visuals and document branding are managed separately from Invoice Settings.
+                    </p>
                     <Row gutter={12}>
                         <Col xs={24} md={12}>
                             <Form.Item label="Business Name" name="business_name" rules={[{ required: true }]}>
@@ -529,16 +452,6 @@ function CompanySection({ value, onChange, onSave, saving, loading, disabled }) 
                                 <Switch />
                             </Form.Item>
                         </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Numbering Prefix" name="numbering_prefix">
-                                <Input placeholder="INV/2025/" />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Numbering Suffix" name="numbering_suffix">
-                                <Input placeholder="-SE" />
-                            </Form.Item>
-                        </Col>
                     </Row>
                 </Form>
             )}
@@ -554,12 +467,15 @@ function SalesSection({ value, onChange, onSave, saving, loading, disabled }) {
     return (
         <SectionCard
             id="sales"
-            title="Sales & Purchases"
+            title="Invoice Defaults"
             extra={<SaveBar onSave={onSave} saving={saving} disabled={disabled} />}
             loading={loading}
         >
             {!loading && (
                 <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
+                    <p style={{ marginTop: 0, color: "var(--kb-color-text-secondary)" }}>
+                        These defaults are used when generating invoice numbers and pre-filling due dates for new invoices.
+                    </p>
                     <Row gutter={12}>
                         <Col xs={24} md={12}>
                             <Form.Item label="Invoice Prefix" name="invoice_prefix">
@@ -591,17 +507,6 @@ function SalesSection({ value, onChange, onSave, saving, loading, disabled }) {
                                 <InputNumber min={0} style={{ width: "100%" }} />
                             </Form.Item>
                         </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Round Off" name="round_off">
-                                <Select
-                                    options={[
-                                        { value: 1, label: "Nearest ₹1" },
-                                        { value: 0.5, label: "Nearest ₹0.50" },
-                                        { value: 0.01, label: "Nearest ₹0.01" },
-                                    ]}
-                                />
-                            </Form.Item>
-                        </Col>
                     </Row>
                 </Form>
             )}
@@ -623,6 +528,9 @@ function TaxSection({ value, onChange, onSave, saving, loading, disabled }) {
         >
             {!loading && (
                 <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
+                    <p style={{ marginTop: 0, color: "var(--kb-color-text-secondary)" }}>
+                        These tax settings currently feed report calculations and GST summaries. e-Invoice, e-Way Bill, and TDS switches stay hidden until the product has live handlers for them.
+                    </p>
                     <Row gutter={12}>
                         <Col xs={24} md={12}>
                             <Form.Item label="GST Type" name="gst_type">
@@ -630,293 +538,12 @@ function TaxSection({ value, onChange, onSave, saving, loading, disabled }) {
                             </Form.Item>
                         </Col>
                         <Col xs={24} md={12}>
-                            <Form.Item label="e-Invoice Enabled" name="enable_einvoice" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="e-Way Bill Enabled" name="enable_eway" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="TDS Enabled" name="tds_enabled" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            )}
-        </SectionCard>
-    );
-}
-
-function PaymentsSection({ value, onChange, onSave, saving, loading, disabled }) {
-    const [form] = Form.useForm();
-    useEffect(() => {
-        if (!loading) form.setFieldsValue(value);
-    }, [value, loading, form]);
-    return (
-        <SectionCard
-            id="payments"
-            title="Payments & Banking"
-            extra={<SaveBar onSave={onSave} saving={saving} disabled={disabled} />}
-            loading={loading}
-        >
-            {!loading && (
-                <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
-                    <Row gutter={12}>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="UPI ID" name="upi_id">
-                                <Input placeholder="name@bank" />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Bank Name" name="bank_name">
-                                <Input />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Account Number" name="account_number">
-                                <Input />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="IFSC" name="ifsc">
-                                <Input onChange={(e) => onChange({ ...value, ifsc: e.target.value.toUpperCase() })} />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Razorpay" name={["gateways", "razorpay"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Stripe" name={["gateways", "stripe"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            )}
-        </SectionCard>
-    );
-}
-
-function InventorySection({ value, onChange, onSave, saving, loading, disabled }) {
-    const [form] = Form.useForm();
-    useEffect(() => {
-        if (!loading) form.setFieldsValue(value);
-    }, [value, loading, form]);
-    return (
-        <SectionCard
-            id="inventory"
-            title="Inventory"
-            extra={<SaveBar onSave={onSave} saving={saving} disabled={disabled} />}
-            loading={loading}
-        >
-            {!loading && (
-                <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
-                    <Row gutter={12}>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Enable Inventory" name="enabled" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Valuation Method" name="valuation">
-                                <Select options={[{ value: "FIFO" }, { value: "WAC" }]} />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Low Stock Alerts" name="low_stock_alert" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Batch/Expiry Tracking" name="batch_expiry" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            )}
-        </SectionCard>
-    );
-}
-
-function DocsSection({ value, onChange, onSave, saving, loading, disabled }) {
-    const [form] = Form.useForm();
-    useEffect(() => {
-        if (!loading) form.setFieldsValue(value);
-    }, [value, loading, form]);
-    return (
-        <SectionCard
-            id="docs"
-            title="Documents & Branding"
-            extra={<SaveBar onSave={onSave} saving={saving} disabled={disabled} />}
-            loading={loading}
-        >
-            {!loading && (
-                <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
-                    <Row gutter={12}>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Paper Size" name="paper_size">
-                                <Select options={[{ value: "A4" }, { value: "A5" }, { value: "80mm" }]} />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Signature/Seal URL" name="signature_url">
-                                <Input />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24}>
-                            <Form.Item label="Header (HTML)" name="header_html">
-                                <Input.TextArea rows={4} />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24}>
-                            <Form.Item label="Footer (HTML)" name="footer_html">
-                                <Input.TextArea rows={4} />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24}>
-                            <Form.Item label="Invoice Terms" name="terms_invoice">
-                                <Input.TextArea rows={4} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            )}
-        </SectionCard>
-    );
-}
-
-function NotifySection({ value, onChange, onSave, saving, loading, disabled }) {
-    const [form] = Form.useForm();
-    useEffect(() => {
-        if (!loading) form.setFieldsValue(value);
-    }, [value, loading, form]);
-    return (
-        <SectionCard
-            id="notify"
-            title="Notifications & Integrations"
-            extra={<SaveBar onSave={onSave} saving={saving} disabled={disabled} />}
-            loading={loading}
-        >
-            {!loading && (
-                <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
-                    <Row gutter={12}>
-                        <Col xs={24} md={8}>
-                            <Form.Item label="Email" name={["channels", "email"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={8}>
-                            <Form.Item label="SMS" name={["channels", "sms"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={8}>
-                            <Form.Item label="WhatsApp" name={["channels", "whatsapp"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-
-                        <Col span={24}>
-                            <Divider>Triggers</Divider>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Invoice Created" name={["triggers", "invoice_created"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Payment Received" name={["triggers", "payment_received"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Low Stock" name={["triggers", "low_stock"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Approval Request" name={["triggers", "approval_request"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-
-                        <Col span={24}>
-                            <Divider>Integrations</Divider>
-                        </Col>
-                        <Col xs={24} md={8}>
-                            <Form.Item label="WhatsApp Business API" name={["integrations", "whatsapp_business"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={8}>
-                            <Form.Item label="Tally CSV Export" name={["integrations", "tally_export"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={8}>
-                            <Form.Item label="Webhooks" name={["integrations", "webhooks"]} valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            )}
-        </SectionCard>
-    );
-}
-
-function SecuritySection({ value, onChange, onSave, saving, loading, disabled }) {
-    const [form] = Form.useForm();
-    useEffect(() => {
-        if (!loading) form.setFieldsValue(value);
-    }, [value, loading, form]);
-    return (
-        <SectionCard
-            id="security"
-            title="Data & Security"
-            extra={<SaveBar onSave={onSave} saving={saving} disabled={disabled} />}
-            loading={loading}
-        >
-            {!loading && (
-                <Form form={form} layout="vertical" onValuesChange={(_, all) => onChange(all)}>
-                    <Row gutter={12}>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Enable Export/Import" name="export_import_enabled" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Lock Periods" name="period_lock" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        {value?.period_lock && (
-                            <Col xs={24} md={12}>
-                                <Form.Item label="Lock Up To (YYYY-MM)" name="period_lock_upto">
-                                    <Input placeholder="2025-06" />
-                                </Form.Item>
-                            </Col>
-                        )}
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Two Factor Auth" name="two_factor" valuePropName="checked">
-                                <Switch />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Session Timeout (min)" name="session_timeout_minutes">
-                                <InputNumber min={5} style={{ width: "100%" }} />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item label="Audit Log" name="audit_log_enabled" valuePropName="checked">
-                                <Switch />
+                            <Form.Item
+                                label="Income Tax Rate (%)"
+                                name="income_tax_rate"
+                                extra="Used by report tax estimation when no stronger org-specific override exists."
+                            >
+                                <InputNumber min={0} max={100} step={0.1} style={{ width: "100%" }} />
                             </Form.Item>
                         </Col>
                     </Row>

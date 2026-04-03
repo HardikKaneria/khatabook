@@ -6,12 +6,14 @@ import {
     Grid,
     Button,
     Typography,
+    Select,
 } from "antd";
 import {
     MenuFoldOutlined,
     MenuUnfoldOutlined,
     HomeOutlined,
     TeamOutlined,
+    ContactsOutlined,
     FileOutlined,
     SettingOutlined,
     DollarCircleOutlined,
@@ -19,6 +21,8 @@ import {
 } from "@ant-design/icons";
 import logo from "../assets/logo.svg";
 import logoCompact from "../assets/V_logo.svg";
+import { clearAuth, getAuth } from "../utils/authStorage";
+import { makeDefaultApiFetch } from "../utils/apiClient";
 
 const { Header, Content, Footer, Sider } = Layout;
 const { Title } = Typography;
@@ -67,7 +71,9 @@ export default function ResponsiveShell({ children, user }) {
         const base = [
             { key: "home", icon: <HomeOutlined />, label: "Home", href: "/home" },
             { key: "accounts", icon: <TeamOutlined />, label: "Accounts", href: "/accounts" },
+            { key: "contacts", icon: <ContactsOutlined />, label: "Contacts", href: "/contacts" },
             { key: "invoices", icon: <FileOutlined />, label: "Invoices", href: "/invoices" },
+            { key: "payments", icon: <DollarCircleOutlined />, label: "Payments", href: "/payments" },
             { key: "expenses", icon: <DollarCircleOutlined />, label: "Expenses", href: "/expenses" },
             { key: "reports", icon: <BarChartOutlined />, label: "Profit & Tax", href: "/reports" },
         ];
@@ -113,16 +119,16 @@ export default function ResponsiveShell({ children, user }) {
 
     const handleLogout = async () => {
         try {
-            await fetch("/wp-json/kbs/v1/logout", { method: "POST", credentials: "include" });
+            const auth = await getAuth();
+            if (auth?.token || auth?.rest) {
+                const apiFetch = makeDefaultApiFetch(auth?.rest, auth?.token);
+                await apiFetch("/kbs/v1/logout", { method: "POST" });
+            } else {
+                await fetch("/wp-json/kbs/v1/logout", { method: "POST", credentials: "include" });
+            }
         } catch (_) { }
-        // local cleanup
-        localStorage.removeItem("auth_token");
-        localStorage.removeItem("token_expires_at");
-        localStorage.removeItem("user_name");
-        localStorage.removeItem("role");
-        sessionStorage.removeItem("kbs_rest_root");
-        sessionStorage.removeItem("kbs_rest_nonce");
-        window.location.href = "/?action=logout";
+        clearAuth();
+        window.location.href = "/login?action=logout";
     };
 
     return (
@@ -224,6 +230,20 @@ export default function ResponsiveShell({ children, user }) {
                     <Title level={4} style={{ margin: 0, flex: 1 }}>
                         Welcome{user?.name ? `, ${user.name}` : ""}
                     </Title>
+                    {Array.isArray(user?.orgs) && user.orgs.length > 1 ? (
+                        <Select
+                            style={{ minWidth: 240 }}
+                            value={Number(user?.orgId)}
+                            disabled={user?.orgSwitching}
+                            onChange={(value) => user?.onSwitchOrg?.(value)}
+                            options={user.orgs.map((org) => ({
+                                value: Number(org.org_id),
+                                label: org.org_name
+                                    ? `${org.org_name}${org.role ? ` (${org.role.replace("c_", "").replace("_", " ")})` : ""}`
+                                    : `Organization #${org.org_id}`,
+                            }))}
+                        />
+                    ) : null}
                     <Button danger onClick={handleLogout}>
                         Logout
                     </Button>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Input, Select, Switch } from "antd";
+import { Input, Switch } from "antd";
 import { useToast } from "../../../components/ToastProvider";
 import { getInvoiceSettings, saveInvoiceSettings } from "./invoiceSettingsApi";
+import InvoiceLogoUploader from "./InvoiceLogoUploader.jsx";
 import InvoiceTemplatePreview from "./InvoiceTemplatePreview.jsx";
 
 const PLACEHOLDER_HINT =
@@ -13,6 +14,7 @@ export default function InvoiceSettingsPage() {
     const [templates, setTemplates] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
+    const [logoBusy, setLogoBusy] = useState(false);
 
     useEffect(() => {
         let alive = true;
@@ -52,12 +54,15 @@ export default function InvoiceSettingsPage() {
         updateField(key, event.target.value);
     };
 
-    const handleSelectChange = (key) => (value) => {
-        updateField(key, value);
-    };
-
     const handleSwitchChange = (key) => (checked) => {
         updateField(key, checked ? 1 : 0);
+    };
+
+    const applySettingsResponse = (response, fallbackSettings = settings) => {
+        setSettings(response?.settings || fallbackSettings || {});
+        if (Array.isArray(response?.templates)) {
+            setTemplates(response.templates);
+        }
     };
 
     const handleSave = async () => {
@@ -65,7 +70,7 @@ export default function InvoiceSettingsPage() {
         setSaving(true);
         try {
             const response = await saveInvoiceSettings(settings);
-            setSettings(response?.settings || settings);
+            applySettingsResponse(response, settings);
             toast.success("Invoice settings updated");
         } catch (error) {
             console.error("Invoice settings save failed", error);
@@ -98,40 +103,54 @@ export default function InvoiceSettingsPage() {
                     <p className="invoice-settings-eyebrow">Brand &amp; Email</p>
                     <h1>Invoice Template &amp; Email</h1>
                     <p className="invoice-settings-subtitle">
-                        Brand your invoices and control outgoing email copy.
+                        Brand your invoices, manage the org-wide template, and control outgoing email copy.
                     </p>
                 </div>
-                <button className="invoice-settings-save" onClick={handleSave} disabled={saving}>
-                    {saving ? "Saving…" : "Save Changes"}
+                <button className="invoice-settings-save" onClick={handleSave} disabled={saving || logoBusy}>
+                    {saving ? "Saving…" : logoBusy ? "Uploading Logo…" : "Save Changes"}
                 </button>
             </header>
 
             <div className="invoice-settings-grid">
                 <div className="invoice-settings-form">
                     <section className="invoice-settings-card">
-                        <SectionTitle title="Template" description="Choose visuals for your invoice PDF." />
-                        <div className="field">
-                            <label htmlFor="template-select">Default Template</label>
-                            <Select
-                                id="template-select"
-                                value={settings.default_template_id || ""}
-                                onChange={handleSelectChange("default_template_id")}
-                                options={templates.map((tpl) => ({ value: tpl.id, label: tpl.name }))}
-                            />
-                            {selectedTemplate?.description ? (
-                                <p className="field-hint">{selectedTemplate.description}</p>
-                            ) : null}
+                        <SectionTitle title="Template Catalog" description="Choose the one org-wide template used for preview, PDF export, and emailed invoices." />
+                        <div className="template-option-grid" role="list" aria-label="Invoice templates">
+                            {templates.map((tpl) => {
+                                const active = settings.default_template_id === tpl.id;
+                                return (
+                                    <button
+                                        key={tpl.id}
+                                        type="button"
+                                        className={`template-option ${active ? "is-active" : ""}`}
+                                        onClick={() => updateField("default_template_id", tpl.id)}
+                                    >
+                                        <div className="template-option__top">
+                                            <span className="template-option__name">{tpl.name}</span>
+                                            <span className="template-option__state">{active ? "Active" : "Select"}</span>
+                                        </div>
+                                        <code>{tpl.id}</code>
+                                        <p>{tpl.description}</p>
+                                    </button>
+                                );
+                            })}
                         </div>
+                        <p className="field-hint">
+                            Template selection is controlled only here. Invoice create and edit screens follow this active org template.
+                        </p>
 
-                        <div className="field">
-                            <label htmlFor="logo-url">Logo URL</label>
-                            <Input
-                                id="logo-url"
-                                placeholder="https://example.com/logo.png"
-                                value={settings.logo_url || ""}
-                                onChange={handleInputChange("logo_url")}
-                            />
-                        </div>
+                        <InvoiceLogoUploader
+                            logoUrl={settings.logo_url || ""}
+                            disabled={saving || logoBusy}
+                            onBusyChange={setLogoBusy}
+                            onSettingsChange={(nextSettings) =>
+                                setSettings((prev) => ({
+                                    ...(prev || {}),
+                                    ...(nextSettings || {}),
+                                }))
+                            }
+                            onError={(message) => toast.error(message)}
+                        />
 
                         <div className="field-row">
                         <div className="field">
@@ -205,7 +224,7 @@ export default function InvoiceSettingsPage() {
                         />
                         <ToggleField
                             id="show-qr"
-                            label="Show QR code placeholder"
+                            label="Show payment QR code"
                             checked={!!settings.show_qr_code}
                             onChange={handleSwitchChange("show_qr_code")}
                         />
@@ -245,8 +264,8 @@ export default function InvoiceSettingsPage() {
                         <button type="button" className="ghost-btn" onClick={() => window.history.back()}>
                             Cancel
                         </button>
-                        <button type="button" className="invoice-settings-save" onClick={handleSave} disabled={saving}>
-                            {saving ? "Saving…" : "Save Changes"}
+                        <button type="button" className="invoice-settings-save" onClick={handleSave} disabled={saving || logoBusy}>
+                            {saving ? "Saving…" : logoBusy ? "Uploading Logo…" : "Save Changes"}
                         </button>
                     </div>
                 </div>
@@ -257,6 +276,12 @@ export default function InvoiceSettingsPage() {
                     primaryColor={settings.primary_color}
                     accentColor={settings.accent_color}
                     logoUrl={settings.logo_url}
+                    fontFamily={settings.font_family}
+                    footerText={settings.footer_text}
+                    termsAndConditions={settings.terms_and_conditions}
+                    bankDetails={settings.bank_details}
+                    showTaxBreakup={!!settings.show_tax_breakup}
+                    showQrCode={!!settings.show_qr_code}
                 />
             </div>
         </div>

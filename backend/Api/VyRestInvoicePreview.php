@@ -41,16 +41,6 @@ class VyRestInvoicePreview
             ));
         }
 
-        if (!$invoice) {
-            return self::html_response('<html><body><p style="font-family:sans-serif;padding:24px;">No invoice available for preview.</p></body></html>');
-        }
-
-        $items = $wpdb->get_results($wpdb->prepare(
-            "SELECT * FROM {$wpdb->prefix}vy_invoice_items WHERE org_id = %d AND invoice_id = %d ORDER BY id ASC",
-            $org,
-            $invoice->id
-        ));
-
         $orgRow = $wpdb->get_row($wpdb->prepare(
             "SELECT * FROM {$wpdb->prefix}kbs_organizations WHERE org_id = %d LIMIT 1",
             $org
@@ -62,35 +52,62 @@ class VyRestInvoicePreview
         $settingsData = vy_fetch_invoice_template_settings($org);
         $settings = (object) $settingsData;
 
-        $overrides = [
-            'primary_color' => $request->get_param('primary_color'),
-            'accent_color'  => $request->get_param('accent_color'),
-            'logo_url'      => $request->get_param('logo_url'),
+        $textOverrides = [
+            'primary_color',
+            'accent_color',
+            'font_family',
         ];
-        foreach ($overrides as $key => $value) {
+        foreach ($textOverrides as $key) {
+            $value = $request->get_param($key);
             if ($value !== null && $value !== '') {
-                if ($key === 'logo_url') {
-                    $settings->$key = esc_url_raw($value);
-                } else {
-                    $settings->$key = sanitize_text_field($value);
-                }
+                $settings->$key = sanitize_text_field((string) $value);
             }
         }
 
-        $templateId = sanitize_key($request->get_param('template_id'));
-        if (!$templateId) {
-            $templateId = $invoice->template_id ?: ($settings->default_template_id ?? 'minimal-clean');
-        }
-        if (!$templateId) {
-            $templateId = 'minimal-clean';
+        $blockOverrides = [
+            'footer_text',
+            'terms_and_conditions',
+            'bank_details',
+        ];
+        foreach ($blockOverrides as $key) {
+            $value = $request->get_param($key);
+            if ($value !== null && $value !== '') {
+                $settings->$key = wp_kses_post((string) $value);
+            }
         }
 
-        $templatePath = self::resolve_template_path($templateId);
+        foreach (['show_tax_breakup', 'show_qr_code'] as $key) {
+            $value = $request->get_param($key);
+            if ($value !== null && $value !== '') {
+                $settings->{$key} = (int) ((!empty($value) && $value !== '0'));
+            }
+        }
+
+        $logoUrl = $request->get_param('logo_url');
+        if ($logoUrl !== null && $logoUrl !== '') {
+            $settings->logo_url = esc_url_raw((string) $logoUrl);
+        }
+
+        $templateOverride = sanitize_key((string) $request->get_param('template_id'));
+        $templateId = \vy_resolve_invoice_template_id($settings, $invoice, $templateOverride ?: null);
+        $templatePath = \vy_get_invoice_template_path($templateId);
         if (!file_exists($templatePath)) {
             $templateId = 'minimal-clean';
-            $templatePath = self::resolve_template_path($templateId);
+            $templatePath = \vy_get_invoice_template_path($templateId);
         }
         $template = vy_get_invoice_template($templateId);
+
+        if (!$invoice) {
+            $sample = vy_build_preview_sample_invoice($orgRow, $settings, $templateId);
+            $invoice = $sample['invoice'];
+            $items = $sample['items'];
+        } else {
+            $items = $wpdb->get_results($wpdb->prepare(
+                "SELECT * FROM {$wpdb->prefix}vy_invoice_items WHERE org_id = %d AND invoice_id = %d ORDER BY id ASC",
+                $org,
+                $invoice->id
+            ));
+        }
 
         $html = self::render_template($templatePath, [
             'invoice'  => $invoice,
@@ -105,12 +122,6 @@ class VyRestInvoicePreview
         }
 
         return self::html_response($html);
-    }
-
-    private static function resolve_template_path(string $template_id): string
-    {
-        $base = trailingslashit(plugin_dir_path(KHATABOOK_PLUGIN_FILE) . 'backend/templates/invoices');
-        return $base . $template_id . '.php';
     }
 
     private static function render_template(string $path, array $context): ?string

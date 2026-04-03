@@ -21,3 +21,9 @@ export const getExpense = (id) =>
 
 export const createExpense = (payload) =>
     apiClient.post(`${BASE}/expenses`, payload);
+
+export const updateExpense = (id, payload) =>
+    apiClient.put(`${BASE}/expenses/${id}`, payload);
+
+export const archiveExpense = (id) =>
+    apiClient.post(`${BASE}/expenses/${id}/archive`, {});

@@ -3,6 +3,10 @@
 
 const LS_KEY = "kbsaas_auth_v1";
 const PEPPER = "kbs-static-pepper-v1"; // change to an env/secret string
+const DEBUG_AUTH =
+    import.meta.env.DEV &&
+    typeof window !== "undefined" &&
+    window.__KBS_DEBUG_AUTH === true;
 
 // Derive a CryptoKey from origin + static pepper
 async function getKey() {
@@ -67,7 +71,9 @@ export async function saveAuth(raw) {
         const payload = JSON.stringify({ iv: b64(iv), ct: b64(ct) });
         localStorage.setItem(LS_KEY, payload);
     } catch (e) {
-        console.error("saveAuth failed, falling back to plain:", e);
+        if (DEBUG_AUTH) {
+            console.error("saveAuth failed, falling back to plain:", e);
+        }
         localStorage.setItem(LS_KEY, JSON.stringify({ _plain: JSON.stringify(raw) }));
     }
 }
@@ -92,13 +98,24 @@ export async function loadAuth() {
         );
         return JSON.parse(new TextDecoder().decode(pt));
     } catch (e) {
-        console.warn("loadAuth failed:", e);
+        if (DEBUG_AUTH) {
+            console.warn("loadAuth failed:", e);
+        }
         return null;
     }
 }
 
 export function clearAuth() {
     localStorage.removeItem(LS_KEY);
+    localStorage.removeItem("vy_token");
+    localStorage.removeItem("vy_active_org_id");
+    localStorage.removeItem("vy_wp_rest_nonce");
+    localStorage.removeItem("auth_token");
+    localStorage.removeItem("token_expires_at");
+    localStorage.removeItem("user_name");
+    localStorage.removeItem("role");
+    sessionStorage.removeItem("kbs_rest_root");
+    sessionStorage.removeItem("kbs_rest_nonce");
 }
 
 export async function isLoggedIn() {
@@ -110,7 +127,5 @@ export async function isLoggedIn() {
 
 // convenience getters
 export async function getAuth() {
-    const v = await loadAuth();
-    console.log("getAuth", v);
-    return v;
+    return loadAuth();
 }

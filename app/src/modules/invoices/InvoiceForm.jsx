@@ -2,7 +2,6 @@ import { useEffect, useState, useCallback } from "react";
 import apiClient from "../../lib/apiClient";
 import ContactSuggestInput from "../contacts/ContactSuggestInput.jsx";
 import { getInvoiceDescriptions } from "./api";
-import { getInvoiceSettings } from "../settings/invoices/invoiceSettingsApi";
 
 const parseTermsDays = (value) => {
     if (typeof value === "number" && !Number.isNaN(value)) {
@@ -41,49 +40,46 @@ const createEmptyItem = () => ({
     tax_rate: 0,
 });
 
-export default function InvoiceForm({ onSubmit, onCancel }) {
+const buildInitialForm = (initialData, today) => ({
+    invoice_number: initialData?.invoice_number || "",
+    date: initialData?.date || today,
+    due_date: initialData?.due_date || initialData?.date || today,
+    customer_name: initialData?.customer_name || "",
+    customer_email: initialData?.customer_email || "",
+    customer_phone: initialData?.customer_phone || "",
+    notes: initialData?.notes || "",
+});
+
+const buildInitialItems = (initialData) => {
+    if (Array.isArray(initialData?.items) && initialData.items.length) {
+        return initialData.items.map((item) => ({
+            description: item?.description || "",
+            quantity: item?.quantity ?? 1,
+            unit_price: item?.unit_price ?? 0,
+            tax_rate: item?.tax_rate ?? 0,
+        }));
+    }
+
+    return [createEmptyItem()];
+};
+
+export default function InvoiceForm({ onSubmit, onCancel, initialData = null, submitLabel }) {
     const today = new Date().toISOString().slice(0, 10);
-    const [form, setForm] = useState({
-        invoice_number: "",
-        date: today,
-        due_date: today,
-        customer_name: "",
-        customer_email: "",
-        customer_phone: "",
-        notes: "",
-        template_id: "",
-    });
-    const [items, setItems] = useState([createEmptyItem()]);
+    const isEditMode = Boolean(initialData?.id);
+    const [form, setForm] = useState(() => buildInitialForm(initialData, today));
+    const [items, setItems] = useState(() => buildInitialItems(initialData));
     const [dueOffsetDays, setDueOffsetDays] = useState(null);
-    const [dueDateTouched, setDueDateTouched] = useState(false);
+    const [dueDateTouched, setDueDateTouched] = useState(isEditMode);
     const [invoiceNumberLoading, setInvoiceNumberLoading] = useState(false);
-    const [selectedContactId, setSelectedContactId] = useState(null);
+    const [selectedContactId, setSelectedContactId] = useState(initialData?.contact_id || null);
     const [descriptionSuggestions, setDescriptionSuggestions] = useState([]);
-    const [templateOptions, setTemplateOptions] = useState([]);
-    const [templatesLoading, setTemplatesLoading] = useState(true);
 
     useEffect(() => {
-        let cancelled = false;
-        (async () => {
-            try {
-                const resp = await getInvoiceSettings();
-                if (cancelled) return;
-                setTemplateOptions(resp?.templates || []);
-                const defaultTemplate = resp?.settings?.default_template_id || "";
-                setForm((prev) => ({
-                    ...prev,
-                    template_id: prev.template_id || defaultTemplate || "",
-                }));
-            } catch (e) {
-                console.warn("Failed to load invoice template settings", e);
-            } finally {
-                if (!cancelled) setTemplatesLoading(false);
-            }
-        })();
-        return () => {
-            cancelled = true;
-        };
-    }, []);
+        setForm(buildInitialForm(initialData, today));
+        setItems(buildInitialItems(initialData));
+        setSelectedContactId(initialData?.contact_id || null);
+        setDueDateTouched(Boolean(initialData?.id));
+    }, [initialData, today]);
 
     useEffect(() => {
         let cancelled = false;
@@ -140,8 +136,10 @@ export default function InvoiceForm({ onSubmit, onCancel }) {
     );
 
     useEffect(() => {
-        fetchNextInvoiceNumber(form.date);
-    }, [form.date, fetchNextInvoiceNumber]);
+        if (!isEditMode) {
+            fetchNextInvoiceNumber(form.date);
+        }
+    }, [form.date, fetchNextInvoiceNumber, isEditMode]);
 
     const fetchDescriptionSuggestions = useCallback(async (term = "") => {
         try {
@@ -223,9 +221,6 @@ export default function InvoiceForm({ onSubmit, onCancel }) {
                 tax_rate: parseFloat(item.tax_rate) || 0,
             })),
         };
-        if (!payload.template_id) {
-            delete payload.template_id;
-        }
         onSubmit?.(payload);
     };
 
@@ -253,28 +248,6 @@ export default function InvoiceForm({ onSubmit, onCancel }) {
                     <label className="kb-muted">Due Date</label>
                     <input type="date" className="kb-input" value={form.due_date} onChange={handleChange("due_date")} />
                 </div>
-            </div>
-
-            <div>
-                <label className="kb-muted">Invoice Template</label>
-                <select
-                    className="kb-input"
-                    value={form.template_id || ""}
-                    onChange={handleChange("template_id")}
-                    disabled={templatesLoading}
-                >
-                    {!templatesLoading && !templateOptions.length ? (
-                        <option value="">Default (Minimal)</option>
-                    ) : null}
-                    {templateOptions.map((tpl) => (
-                        <option key={tpl.id} value={tpl.id}>
-                            {tpl.name}
-                        </option>
-                    ))}
-                </select>
-                <p className="kb-muted" style={{ marginTop: 4 }}>
-                    This controls the PDF/email layout sent to customers.
-                </p>
             </div>
 
             <div className="grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 16 }}>
@@ -379,7 +352,7 @@ export default function InvoiceForm({ onSubmit, onCancel }) {
                     Cancel
                 </button>
                 <button type="submit" className="kb-btn kb-btn--primary">
-                    Create Invoice
+                    {submitLabel || (isEditMode ? "Save Changes" : "Create Invoice")}
                 </button>
             </div>
         </form>

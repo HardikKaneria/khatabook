@@ -6,8 +6,14 @@ export default function InvoiceTemplatePreview({
     primaryColor,
     accentColor,
     logoUrl,
+    fontFamily,
+    footerText,
+    termsAndConditions,
+    bankDetails,
+    showTaxBreakup,
+    showQrCode,
     invoiceId,
-    fallbackMessage = "Create your first invoice to see a live preview here.",
+    fallbackMessage = "The preview is unavailable right now.",
 }) {
     const previewUrl = useMemo(() => {
         const params = new URLSearchParams();
@@ -15,9 +21,27 @@ export default function InvoiceTemplatePreview({
         if (primaryColor) params.set("primary_color", primaryColor);
         if (accentColor) params.set("accent_color", accentColor);
         if (logoUrl) params.set("logo_url", logoUrl);
+        if (fontFamily) params.set("font_family", fontFamily);
+        if (footerText) params.set("footer_text", footerText);
+        if (termsAndConditions) params.set("terms_and_conditions", termsAndConditions);
+        if (bankDetails) params.set("bank_details", bankDetails);
+        params.set("show_tax_breakup", showTaxBreakup ? "1" : "0");
+        params.set("show_qr_code", showQrCode ? "1" : "0");
         if (invoiceId) params.set("invoice_id", invoiceId);
         return `/wp-json/vy/v1/invoices/preview?${params.toString()}`;
-    }, [selectedTemplateId, primaryColor, accentColor, logoUrl, invoiceId]);
+    }, [
+        selectedTemplateId,
+        primaryColor,
+        accentColor,
+        logoUrl,
+        fontFamily,
+        footerText,
+        termsAndConditions,
+        bankDetails,
+        showTaxBreakup,
+        showQrCode,
+        invoiceId,
+    ]);
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -31,8 +55,8 @@ export default function InvoiceTemplatePreview({
         <aside className="invoice-settings-preview">
             <div className="preview-header">
                 <div>
-                    <h3>Live Preview</h3>
-                    <p>Updates instantly as you customize the design.</p>
+                    <h3>Template Preview</h3>
+                    <p>Uses your latest invoice when available, or a synthetic sample invoice when your org has not created one yet.</p>
                 </div>
                 {templateName || selectedTemplateId ? (
                     <div className="template-chip">

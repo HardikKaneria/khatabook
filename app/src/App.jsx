@@ -4,18 +4,57 @@ import Login from "./pages/Login";
 import Home from "./pages/Home";
 import CompanySettings from "./pages/CompanySettings";
 import DashboardLayout from "./layouts/DashboardLayout";
-import { loadAuth, clearAuth } from "./utils/authStorage";
+import { loadAuth, clearAuth, saveAuth } from "./utils/authStorage";
 import Users from "./pages/UsersAdmin";
 import ToastProvider from "./components/ToastProvider";
-import { configureApiClient } from "./lib/apiClient";
+import apiClient, { configureApiClient } from "./lib/apiClient";
 import AccountsPage from "./modules/accounts/AccountsPage.jsx";
 import AccountDetailPage from "./modules/accounts/AccountDetailPage.jsx";
 import InvoicesPage from "./modules/invoices/InvoicesPage.jsx";
 import InvoiceDetailPage from "./modules/invoices/InvoiceDetailPage.jsx";
 import ExpensesPage from "./modules/expenses/ExpensesPage.jsx";
 import ExpenseDetailPage from "./modules/expenses/ExpenseDetailPage.jsx";
+import PaymentsPage from "./modules/payments/PaymentsPage.jsx";
 import ProfitTaxPage from "./modules/reports/ProfitTaxPage.jsx";
 import InvoiceSettingsPage from "./modules/settings/invoices/InvoiceSettingsPage.jsx";
+import ContactsPage from "./modules/contacts/ContactsPage.jsx";
+import AcceptInvite from "./pages/AcceptInvite.jsx";
+
+const getOrgIdFromAuth = (auth) => {
+    const user = auth?.user || {};
+    return (
+        user?.org_id ??
+        user?.orgId ??
+        auth?.org_id ??
+        auth?.orgId ??
+        (Array.isArray(user?.orgs) &&
+            (user.orgs.find((org) => org.is_primary)?.org_id ?? user.orgs[0]?.org_id))
+    );
+};
+
+const getActiveOrgRole = (auth) => {
+    const user = auth?.user || {};
+    const orgId = getOrgIdFromAuth(auth);
+    if (orgId && Array.isArray(user?.orgs)) {
+        const activeOrg = user.orgs.find((org) => Number(org?.org_id) === Number(orgId));
+        if (activeOrg?.role) {
+            return String(activeOrg.role).toLowerCase();
+        }
+    }
+    return String(user?.role || "").toLowerCase();
+};
+
+const getActiveOrgName = (auth) => {
+    const user = auth?.user || {};
+    const orgId = getOrgIdFromAuth(auth);
+    if (orgId && Array.isArray(user?.orgs)) {
+        const activeOrg = user.orgs.find((org) => Number(org?.org_id) === Number(orgId));
+        if (activeOrg?.org_name) {
+            return activeOrg.org_name;
+        }
+    }
+    return user?.org_name || null;
+};
 
 // --- tiny router helpers -----------------------------------------------------
 function getRoute() {
@@ -60,6 +99,7 @@ export default function App() {
     const [route, setRoute] = useState(getRoute());
     const [ready, setReady] = useState(false);
     const [expiryTimer, setExpiryTimer] = useState(null);
+    const [orgSwitching, setOrgSwitching] = useState(false);
 
     // 1) Initial auth hydrate (encrypted localStorage)
     useEffect(() => {
@@ -146,46 +186,129 @@ export default function App() {
         configureApiClient(auth || null);
     }, [auth]);
 
+    useEffect(() => {
+        const onAuthInvalid = () => {
+            clearAuth();
+            setAuth(null);
+            navigate("/login?expired=1", { replace: true });
+        };
+
+        window.addEventListener("kbs-auth-invalid", onAuthInvalid);
+        return () => window.removeEventListener("kbs-auth-invalid", onAuthInvalid);
+    }, []);
+
     // 6) Lightweight auth check
     const isAuthed =
         !!auth?.token &&
         !!auth?.user &&
         (!auth?.expires_at || Date.now() / 1000 < auth.expires_at);
+    const isPublicRoute = route.slug === "login" || route.slug === "accept-invite";
 
     // 7) Route guards without flicker
     useEffect(() => {
         if (!ready) return;
-        if (!isAuthed && route.slug !== "login") {
+        if (!isAuthed && !isPublicRoute) {
             navigate("/login", { replace: true });
         } else if (isAuthed && route.slug === "login") {
             navigate("/home", { replace: true });
         }
-    }, [ready, isAuthed, route.slug]);
+    }, [ready, isAuthed, isPublicRoute, route.slug]);
+
+    useEffect(() => {
+        if (!ready || !isAuthed) return;
+
+        const params = new URLSearchParams(window.location.search);
+        const requestedOrgId = Number(params.get("org_id") || 0);
+        const currentOrgId = Number(getOrgIdFromAuth(auth) || 0);
+        if (!requestedOrgId || requestedOrgId === currentOrgId) {
+            return;
+        }
+
+        const hasRequestedOrg = Array.isArray(auth?.user?.orgs)
+            && auth.user.orgs.some((org) => Number(org?.org_id) === requestedOrgId);
+
+        const stripOrgQuery = () => {
+            params.delete("org_id");
+            const nextSearch = params.toString();
+            const nextUrl = `${window.location.pathname}${nextSearch ? `?${nextSearch}` : ""}`;
+            window.history.replaceState({}, "", nextUrl);
+        };
+
+        if (!hasRequestedOrg) {
+            stripOrgQuery();
+            return;
+        }
+
+        let cancelled = false;
+        setOrgSwitching(true);
+
+        (async () => {
+            try {
+                const nextAuth = await apiClient.post("/kbs/v1/active-org", { org_id: requestedOrgId });
+                if (cancelled) return;
+                await saveAuth(nextAuth);
+                setAuth(nextAuth);
+            } catch (_) {
+                if (!cancelled) {
+                    stripOrgQuery();
+                }
+            } finally {
+                if (!cancelled) {
+                    stripOrgQuery();
+                    setOrgSwitching(false);
+                }
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [ready, isAuthed, auth, route]);
 
     // 8) Avoid flash while deciding redirects
     if (!ready) return null;
-    if (!isAuthed && route.slug !== "login") return null;
+    if (!isAuthed && !isPublicRoute) return null;
     if (isAuthed && route.slug === "login") return null;
 
-    const role = auth?.user?.role || "";
+    const role = getActiveOrgRole(auth);
     const userForLayout = {
         id: auth?.user?.id,
         name: auth?.user?.display_name || auth?.user?.name || "User",
         display_name: auth?.user?.display_name,
         role,
-        orgId: auth?.user?.org_id ?? auth?.user?.orgId ?? 1,
+        orgId: getOrgIdFromAuth(auth) ?? 1,
+        orgName: getActiveOrgName(auth),
+        orgs: Array.isArray(auth?.user?.orgs) ? auth.user.orgs : [],
+        orgSwitching,
+        onSwitchOrg: async (nextOrgId) => {
+            if (!nextOrgId || Number(nextOrgId) === Number(getOrgIdFromAuth(auth) || 0)) {
+                return;
+            }
+
+            setOrgSwitching(true);
+            try {
+                const nextAuth = await apiClient.post("/kbs/v1/active-org", { org_id: Number(nextOrgId) });
+                await saveAuth(nextAuth);
+                setAuth(nextAuth);
+                navigate("/home", { replace: true });
+            } finally {
+                setOrgSwitching(false);
+            }
+        },
     };
 
     const Page = (() => {
         switch (route.slug) {
             case "home":
-                return <Home />;
+                return <Home user={userForLayout} />;
             case "accounts":
                 return route.param ? (
                     <AccountDetailPage accountId={route.param} />
                 ) : (
                     <AccountsPage />
                 );
+            case "contacts":
+                return <ContactsPage />;
             case "invoices":
                 return route.param ? (
                     <InvoiceDetailPage invoiceId={route.param} />
@@ -198,6 +321,8 @@ export default function App() {
                 ) : (
                     <ExpensesPage />
                 );
+            case "payments":
+                return <PaymentsPage />;
             case "reports":
                 return <ProfitTaxPage />;
             case "settings":
@@ -214,7 +339,9 @@ export default function App() {
         }
     })();
 
-    const content = !isAuthed ? (
+    const content = route.slug === "accept-invite" ? (
+        <AcceptInvite auth={auth} onAuthenticated={setAuth} />
+    ) : !isAuthed ? (
         <Login />
     ) : (
         <DashboardLayout user={userForLayout}>{Page}</DashboardLayout>

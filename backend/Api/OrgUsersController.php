@@ -1,6 +1,7 @@
 <?php
 namespace KBS\Api;
 
+use KBS\Auth\OtpAuth;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -31,8 +32,9 @@ class OrgUsersController
         ));
         if (!$uid) return null;
 
+        $storedToken = (string) get_user_meta($uid, 'auth_token', true);
         $exp = (int) get_user_meta($uid, 'auth_token_expires', true);
-        if (!$exp || time() >= $exp) return null;
+        if (!vy_auth_token_is_active((string) $token, $storedToken, $exp)) return null;
 
         // establish current user context for caps checks
         wp_set_current_user($uid);
@@ -159,11 +161,7 @@ class OrgUsersController
 
         foreach ($rows as $row) {
             $payload = self::user_row_to_payload($row);
-            // WP role is single source of truth; but keep org role in sync:
-            $user = get_user_by('ID', $payload['id']);
-            $wp_role = $user ? ($user->roles[0] ?? null) : null;
-
-            $payload['role']   = $wp_role ?: ($row->role ?: 'c_employee');
+            $payload['role']   = self::normalize_role($row->role ?? null);
             $payload['status'] = 'active';
 
             $map[$payload['id']] = $payload;
@@ -194,7 +192,7 @@ class OrgUsersController
                 'id'           => 'invite:' . (int) $r->id,
                 'email'        => $r->email,
                 'display_name' => null,
-                'role'         => in_array($r->role, self::ALLOWED_ROLES, true) ? $r->role : 'c_employee',
+                'role'         => self::normalize_role($r->role ?? null),
                 'status'       => 'invited',
                 'created_at'   => $r->created_at,
             ];
@@ -205,7 +203,7 @@ class OrgUsersController
     private static function ensure_membership(int $org_id, int $user_id, string $role): void {
         global $wpdb;
         $table = $wpdb->prefix . 'kbs_user_org_roles';
-        $role  = in_array($role, self::ALLOWED_ROLES, true) ? $role : 'c_employee';
+        $role  = self::normalize_role($role);
 
         // upsert
         $exists = (int) $wpdb->get_var($wpdb->prepare(
@@ -221,9 +219,9 @@ class OrgUsersController
     }
 
     private static function set_wp_role(int $user_id, string $role): void {
-        $role = in_array($role, self::ALLOWED_ROLES, true) ? $role : 'c_employee';
+        $role = self::normalize_role($role);
         $user = new \WP_User($user_id);
-        // Replace user's role with the org role (your model: org role == WP role)
+        // Keep the WP role aligned for legacy capability checks outside org-scoped APIs.
         $user->set_role($role);
     }
 
@@ -234,6 +232,111 @@ class OrgUsersController
             "SELECT org_name FROM {$table} WHERE org_id = %d LIMIT 1",
             $org_id
         )) ?: null;
+    }
+
+    private static function normalize_role(?string $role): string {
+        return in_array($role, self::ALLOWED_ROLES, true) ? $role : 'c_employee';
+    }
+
+    private static function normalize_invite_email($email): string {
+        $value = trim((string) $email);
+        for ($i = 0; $i < 2; $i++) {
+            $decoded = rawurldecode($value);
+            if ($decoded === $value) {
+                break;
+            }
+            $value = $decoded;
+        }
+        return sanitize_email($value);
+    }
+
+    private static function build_accept_url(string $token, string $email): string {
+        return add_query_arg(
+            [
+                'invite' => $token,
+                'email'  => $email,
+            ],
+            home_url('/accept-invite')
+        );
+    }
+
+    private static function find_invite(string $token, string $email): ?object {
+        global $wpdb;
+
+        $table      = $wpdb->prefix . 'kbs_org_invites';
+        $orgs_table = $wpdb->prefix . 'kbs_organizations';
+
+        $invite = $wpdb->get_row($wpdb->prepare(
+            "SELECT i.*, o.org_name
+             FROM {$table} i
+             LEFT JOIN {$orgs_table} o ON o.org_id = i.org_id
+             WHERE i.token = %s AND i.email = %s
+             LIMIT 1",
+            $token,
+            $email
+        ));
+
+        return $invite ?: null;
+    }
+
+    private static function invite_is_expired(object $invite): bool {
+        if (empty($invite->expires_at)) {
+            return false;
+        }
+
+        $expires = strtotime((string) $invite->expires_at);
+        if (!$expires) {
+            return false;
+        }
+
+        return $expires < time();
+    }
+
+    private static function invite_payload(object $invite): array {
+        return [
+            'id'         => (int) $invite->id,
+            'org_id'     => (int) $invite->org_id,
+            'org_name'   => $invite->org_name ?: sprintf('Organization #%d', (int) $invite->org_id),
+            'email'      => $invite->email,
+            'role'       => self::normalize_role($invite->role ?? null),
+            'status'     => sanitize_text_field((string) ($invite->status ?? 'invited')),
+            'created_at' => $invite->created_at ?: null,
+            'expires_at' => $invite->expires_at ?: null,
+        ];
+    }
+
+    private static function generate_user_login_from_email(string $email): string {
+        $parts = explode('@', $email);
+        $base  = sanitize_user((string) ($parts[0] ?? ''), true);
+        if ($base === '') {
+            $base = 'user';
+        }
+
+        $user_login = $base;
+        $suffix = 1;
+        while (username_exists($user_login)) {
+            $user_login = "{$base}_{$suffix}";
+            $suffix++;
+        }
+
+        return $user_login;
+    }
+
+    private static function create_user_for_invite(string $email, string $role): int|WP_Error {
+        $user_login = self::generate_user_login_from_email($email);
+        $user_id = wp_insert_user([
+            'user_login'   => $user_login,
+            'user_pass'    => wp_generate_password(20, true, true),
+            'user_email'   => $email,
+            'display_name' => $user_login,
+            'role'         => self::normalize_role($role),
+        ]);
+
+        if (is_wp_error($user_id)) {
+            return new WP_Error('invite_user_create_failed', 'Failed to create invited user: ' . $user_id->get_error_message(), ['status' => 500]);
+        }
+
+        return (int) $user_id;
     }
 
     /** Claim invites after a user exists */
@@ -248,10 +351,150 @@ class OrgUsersController
         if (!$invites) return;
 
         foreach ($invites as $i) {
-            $role = in_array($i->role, self::ALLOWED_ROLES, true) ? $i->role : 'c_employee';
+            $role = self::normalize_role($i->role ?? null);
             self::ensure_membership((int)$i->org_id, $user_id, $role);
             $wpdb->update($table, ['status' => 'accepted'], ['id' => (int)$i->id], ['%s'], ['%d']);
         }
+    }
+
+    /** GET /kbs/v1/invite?invite=token&email=... */
+    public static function get_invite(WP_REST_Request $request): WP_REST_Response|WP_Error {
+        $token = sanitize_text_field((string) $request->get_param('invite'));
+        $email = self::normalize_invite_email($request->get_param('email'));
+
+        if ($token === '' || $email === '') {
+            return new WP_Error('bad_request', 'Invite token and email are required.', ['status' => 400]);
+        }
+
+        $invite = self::find_invite($token, $email);
+        if (!$invite) {
+            return new WP_REST_Response([
+                'status'  => 'invalid',
+                'message' => 'This invitation link is invalid or no longer available.',
+            ], 404);
+        }
+
+        $current_user_id = self::current_user_id_from_request($request);
+        $current_user    = $current_user_id ? get_userdata($current_user_id) : null;
+        $existing_user   = get_user_by('email', $invite->email);
+        $email_matches_current_user = $current_user
+            && strcasecmp((string) $current_user->user_email, (string) $invite->email) === 0;
+
+        if (($invite->status ?? '') === 'accepted') {
+            return new WP_REST_Response([
+                'status'  => 'already_accepted',
+                'message' => 'This invitation has already been accepted.',
+                'invite'  => self::invite_payload($invite),
+                'meta'    => [
+                    'user_exists'                => (bool) $existing_user,
+                    'email_matches_current_user' => (bool) $email_matches_current_user,
+                ],
+            ], 200);
+        }
+
+        if (self::invite_is_expired($invite)) {
+            return new WP_REST_Response([
+                'status'  => 'expired',
+                'message' => 'This invitation link has expired. Ask your admin to send a new one.',
+                'invite'  => self::invite_payload($invite),
+                'meta'    => [
+                    'user_exists'                => (bool) $existing_user,
+                    'email_matches_current_user' => (bool) $email_matches_current_user,
+                ],
+            ], 410);
+        }
+
+        return new WP_REST_Response([
+            'status'  => 'valid',
+            'message' => 'Invitation is valid.',
+            'invite'  => self::invite_payload($invite),
+            'meta'    => [
+                'user_exists'                => (bool) $existing_user,
+                'email_matches_current_user' => (bool) $email_matches_current_user,
+            ],
+        ], 200);
+    }
+
+    /** POST /kbs/v1/accept-invite { invite, email } */
+    public static function accept_invite(WP_REST_Request $request): WP_REST_Response|WP_Error {
+        global $wpdb;
+
+        $token = sanitize_text_field((string) $request->get_param('invite'));
+        $email = self::normalize_invite_email($request->get_param('email'));
+
+        if ($token === '' || $email === '') {
+            return new WP_Error('bad_request', 'Invite token and email are required.', ['status' => 400]);
+        }
+
+        $invite = self::find_invite($token, $email);
+        if (!$invite) {
+            return new WP_Error('invite_not_found', 'Invite not found.', ['status' => 404]);
+        }
+
+        if (($invite->status ?? '') === 'accepted') {
+            return new WP_REST_Response([
+                'status'  => 'already_accepted',
+                'message' => 'This invitation has already been used.',
+                'invite'  => self::invite_payload($invite),
+            ], 409);
+        }
+
+        if (self::invite_is_expired($invite)) {
+            return new WP_Error('invite_expired', 'This invitation has expired. Ask your admin to resend it.', ['status' => 410]);
+        }
+
+        $current_user_id = self::current_user_id_from_request($request);
+        if ($current_user_id) {
+            $current_user = get_userdata($current_user_id);
+            if (!$current_user || strcasecmp((string) $current_user->user_email, (string) $invite->email) !== 0) {
+                return new WP_Error('invite_email_mismatch', 'This invitation belongs to a different email address. Sign out first and retry from the invited email.', ['status' => 403]);
+            }
+        }
+
+        $role = self::normalize_role($invite->role ?? null);
+        $user = get_user_by('email', $invite->email);
+        $user_id = $user ? (int) $user->ID : self::create_user_for_invite($invite->email, $role);
+        if (is_wp_error($user_id)) {
+            return $user_id;
+        }
+
+        $table = $wpdb->prefix . 'kbs_org_invites';
+        $wpdb->query('START TRANSACTION');
+
+        try {
+            self::ensure_membership((int) $invite->org_id, (int) $user_id, $role);
+            self::set_wp_role((int) $user_id, $role);
+
+            $updated = $wpdb->update(
+                $table,
+                ['status' => 'accepted'],
+                ['id' => (int) $invite->id],
+                ['%s'],
+                ['%d']
+            );
+            if (false === $updated) {
+                throw new \RuntimeException('Failed to update invite status.');
+            }
+
+            update_user_meta((int) $user_id, 'kbs_account_status', 'approved');
+            update_user_meta((int) $user_id, 'org_id', (int) $invite->org_id);
+            update_user_meta((int) $user_id, 'vy_active_org_id', (int) $invite->org_id);
+
+            $wpdb->query('COMMIT');
+        } catch (\Throwable $e) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('invite_accept_failed', 'Failed to accept invite: ' . $e->getMessage(), ['status' => 500]);
+        }
+
+        $payload = OtpAuth::create_auth_payload((int) $user_id);
+        if (is_wp_error($payload)) {
+            return $payload;
+        }
+
+        $payload['invite']  = self::invite_payload($invite);
+        $payload['message'] = 'Invitation accepted successfully.';
+
+        return new WP_REST_Response($payload, 200);
     }
 
     /** ---------- Endpoints ---------- */
@@ -364,7 +607,7 @@ class OrgUsersController
 
         // Send invitation
         $subject = sprintf('[%s] You have been invited', get_bloginfo('name'));
-        $accept_url = add_query_arg(['invite' => $token, 'email' => rawurlencode($email)], home_url('/accept-invite'));
+        $accept_url = self::build_accept_url($token, $email);
         $body = sprintf(
             "You've been invited to join %s with the role %s.\nUse the button below to accept the invitation. The link expires in 7 days.",
             $org_name,
@@ -442,10 +685,6 @@ class OrgUsersController
         if (!$actorRole) {
             return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
         }
-        $actorRole = self::actor_role_for_org($org_id);
-        if (!$actorRole) {
-            return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
-        }
         $email   = sanitize_email($request->get_param('email'));
         $org_name = self::get_org_name($org_id) ?: sprintf('Organization #%d', $org_id);
 
@@ -468,7 +707,7 @@ class OrgUsersController
                 return new WP_Error('forbidden', 'You cannot manage that invite.', ['status' => 403]);
             }
 
-            $accept_url = add_query_arg(['invite' => $row->token, 'email' => rawurlencode($row->email)], home_url('/accept-invite'));
+            $accept_url = self::build_accept_url((string) $row->token, (string) $row->email);
             if (function_exists('kbs_send_email')) {
                 \kbs_send_email(
                     $row->email,
@@ -496,7 +735,7 @@ class OrgUsersController
                 return new WP_Error('forbidden', 'You cannot manage that invite.', ['status' => 403]);
             }
 
-            $accept_url = add_query_arg(['invite' => $row->token, 'email' => rawurlencode($row->email)], home_url('/accept-invite'));
+            $accept_url = self::build_accept_url((string) $row->token, (string) $row->email);
             if (function_exists('kbs_send_email')) {
                 \kbs_send_email(
                     $row->email,
@@ -524,6 +763,10 @@ class OrgUsersController
 
         $org_id  = absint($request->get_param('org_id'));
         $user_id = $request->get_param('user_id');
+        $actorRole = self::actor_role_for_org($org_id);
+        if (!$actorRole) {
+            return new WP_Error('forbidden', 'Unable to determine permissions for this action.', ['status' => 403]);
+        }
 
         // invited row?
         if (is_string($user_id) && str_starts_with($user_id, 'invite:')) {

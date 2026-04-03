@@ -5,6 +5,7 @@ namespace KBS\Admin;
 class AdminMenu {
 	private const PAGE_SLUGS = [
 		'kbs-admin',
+		'kbs-smtp-settings',
 		'kbs-registration-logs',
 		'kbs-system-logs',
 		'kbs-otp-attempts',
@@ -13,6 +14,7 @@ class AdminMenu {
 	public static function init() {
 		add_action('admin_menu', [self::class, 'register_menu']);
 		add_action('admin_enqueue_scripts', [self::class, 'enqueue_custom_styles']);
+		add_action('admin_post_kbs_save_smtp_settings', [SmtpSettingsPage::class, 'handle_save']);
 	}
 
 	public static function get_page_slugs(): array {
@@ -37,6 +39,15 @@ class AdminMenu {
 			'manage_options',
 			'kbs-admin',
 			[self::class, 'render_pending_users']
+		);
+
+		add_submenu_page(
+			'kbs-admin',
+			'SMTP Settings',
+			'SMTP Settings',
+			'manage_options',
+			'kbs-smtp-settings',
+			[self::class, 'render_smtp_settings']
 		);
 
 		add_submenu_page(
@@ -85,6 +96,10 @@ class AdminMenu {
 
 	public static function render_pending_users() {
 		include __DIR__ . '/views/pending-users.php';
+	}
+
+	public static function render_smtp_settings() {
+		include __DIR__ . '/views/smtp-settings.php';
 	}
 
 	public static function render_registration_logs() {

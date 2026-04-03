@@ -14,6 +14,38 @@ if (!function_exists('vy_get_date_range_defaults')) {
     }
 }
 
+if (!function_exists('vy_fetch_org_settings_category')) {
+    function vy_fetch_org_settings_category(int $org_id, string $category): array
+    {
+        static $cache = [];
+
+        $cache_key = $org_id . ':' . $category;
+        if (array_key_exists($cache_key, $cache)) {
+            return $cache[$cache_key];
+        }
+
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT settings_json
+             FROM {$wpdb->prefix}kbs_settings
+             WHERE org_id = %d AND category = %s
+             LIMIT 1",
+            $org_id,
+            $category
+        ));
+
+        if (!$row || empty($row->settings_json)) {
+            $cache[$cache_key] = [];
+            return $cache[$cache_key];
+        }
+
+        $decoded = json_decode($row->settings_json, true);
+        $cache[$cache_key] = is_array($decoded) ? $decoded : [];
+
+        return $cache[$cache_key];
+    }
+}
+
 if (!function_exists('vy_calculate_account_balance_components')) {
     function vy_calculate_account_balance_components(int $org_id, int $account_id, ?string $date_from = null, ?string $date_to = null): array
     {
@@ -110,6 +142,17 @@ if (!function_exists('vy_get_profit_summary')) {
 if (!function_exists('vy_get_gst_summary')) {
     function vy_get_gst_summary(int $org_id, string $date_from, string $date_to): array
     {
+        $config = vy_get_org_tax_config($org_id);
+        if (!$config['is_gst_registered']) {
+            return [
+                'output_tax'        => 0.0,
+                'input_tax'         => 0.0,
+                'net_gst_payable'   => 0.0,
+                'is_gst_registered' => false,
+                'gst_type'          => $config['gst_type'],
+            ];
+        }
+
         global $wpdb;
         $items_table = $wpdb->prefix . 'vy_invoice_items';
         $invoices_table = $wpdb->prefix . 'vy_invoices';
@@ -143,9 +186,11 @@ if (!function_exists('vy_get_gst_summary')) {
         ));
 
         return [
-            'output_tax'      => $output_tax,
-            'input_tax'       => $input_tax,
-            'net_gst_payable' => $output_tax - $input_tax,
+            'output_tax'        => $output_tax,
+            'input_tax'         => $input_tax,
+            'net_gst_payable'   => $output_tax - $input_tax,
+            'is_gst_registered' => true,
+            'gst_type'          => $config['gst_type'],
         ];
     }
 }
@@ -155,14 +200,32 @@ if (!function_exists('vy_get_org_tax_config')) {
     {
         global $wpdb;
         $table = $wpdb->prefix . 'kbs_organizations';
+        $company_settings = vy_fetch_org_settings_category($org_id, 'company');
+        $tax_settings = vy_fetch_org_settings_category($org_id, 'tax');
         $row = $wpdb->get_row($wpdb->prepare(
             "SELECT default_income_tax_rate, is_gst_registered FROM {$table} WHERE org_id = %d LIMIT 1",
             $org_id
         ), ARRAY_A);
 
+        $legacy_income_tax_rate = isset($row['default_income_tax_rate']) ? (float) $row['default_income_tax_rate'] : 25.0;
+        $legacy_is_gst_registered = isset($row['is_gst_registered']) ? (bool) $row['is_gst_registered'] : true;
+
+        $income_tax_rate = array_key_exists('income_tax_rate', $tax_settings) && is_numeric($tax_settings['income_tax_rate'])
+            ? (float) $tax_settings['income_tax_rate']
+            : $legacy_income_tax_rate;
+
+        $is_gst_registered = array_key_exists('gst_registered', $company_settings)
+            ? (bool) $company_settings['gst_registered']
+            : $legacy_is_gst_registered;
+
+        $gst_type = isset($tax_settings['gst_type']) && is_string($tax_settings['gst_type']) && $tax_settings['gst_type'] !== ''
+            ? sanitize_key($tax_settings['gst_type'])
+            : 'regular';
+
         return [
-            'income_tax_rate' => isset($row['default_income_tax_rate']) ? (float) $row['default_income_tax_rate'] : 25.0,
-            'is_gst_registered' => isset($row['is_gst_registered']) ? (bool) $row['is_gst_registered'] : true,
+            'income_tax_rate'   => $income_tax_rate,
+            'is_gst_registered' => $is_gst_registered,
+            'gst_type'          => $gst_type,
         ];
     }
 }

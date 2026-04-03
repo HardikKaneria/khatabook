@@ -5,7 +5,7 @@ defined('ABSPATH') || exit;
 
 class TableManager
 {
-    private const SCHEMA_VERSION = 5;
+    private const SCHEMA_VERSION = 6;
 
     public static function maybe_upgrade(): void
     {
@@ -106,6 +106,10 @@ class TableManager
             KEY idx_role (role)
         ) {$charset};";
 
+        /*
+         * 7-11) Legacy business tables retained for backward compatibility.
+         * Active invoice/accounting flows in the current app use the vy_* tables below.
+         */
         /* 7) Invoices (unique number per org + indexes) */
         $sql[] = "CREATE TABLE {$wpdb->prefix}kbs_invoices (
             invoice_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -357,7 +361,27 @@ class TableManager
             KEY idx_org (org_id)
         ) {$charset};";
 
-        /* 20) Vy Expenses */
+        /* 20) Vy Record History */
+        $sql[] = "CREATE TABLE {$wpdb->prefix}vy_record_history (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            org_id BIGINT UNSIGNED NOT NULL,
+            record_type VARCHAR(32) NOT NULL,
+            record_id BIGINT UNSIGNED NOT NULL,
+            related_record_type VARCHAR(32) NULL,
+            related_record_id BIGINT UNSIGNED NULL,
+            action VARCHAR(50) NOT NULL,
+            summary VARCHAR(255) NOT NULL,
+            details_json LONGTEXT NULL,
+            actor_user_id BIGINT UNSIGNED NULL,
+            actor_label VARCHAR(191) NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_org_record (org_id, record_type, record_id),
+            KEY idx_org_related (org_id, related_record_type, related_record_id),
+            KEY idx_created_at (created_at)
+        ) {$charset};";
+
+        /* 21) Vy Expenses */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_expenses (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -378,7 +402,7 @@ class TableManager
             KEY idx_category (category)
         ) {$charset};";
 
-        /* 21) Vy Journal Entries */
+        /* 22) Vy Journal Entries */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_journal_entries (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -394,7 +418,7 @@ class TableManager
             KEY idx_source (source_module, source_id)
         ) {$charset};";
 
-        /* 22) Vy Journal Lines */
+        /* 23) Vy Journal Lines */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_journal_lines (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             journal_id BIGINT UNSIGNED NOT NULL,
@@ -410,7 +434,7 @@ class TableManager
             KEY idx_org_account (org_id, account_id)
         ) {$charset};";
 
-        /* 23) Invoice Template Settings */
+        /* 24) Invoice Template Settings */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_template_settings (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -461,6 +485,7 @@ class TableManager
 
         self::ensure_column($wpdb->prefix . 'kbs_organizations', 'default_income_tax_rate', "ADD COLUMN default_income_tax_rate DECIMAL(5,2) NULL DEFAULT 25.00 AFTER industry");
         self::ensure_column($wpdb->prefix . 'kbs_organizations', 'is_gst_registered', "ADD COLUMN is_gst_registered TINYINT(1) NOT NULL DEFAULT 1 AFTER default_income_tax_rate");
+        self::redact_legacy_otp_values();
     }
 
     private static function ensure_column(string $table, string $column, string $ddl): void
@@ -470,5 +495,36 @@ class TableManager
         if (!$exists) {
             $wpdb->query("ALTER TABLE {$table} {$ddl}");
         }
+    }
+
+    private static function redact_legacy_otp_values(): void
+    {
+        global $wpdb;
+
+        if (\get_option('kbs_otp_values_redacted', false)) {
+            return;
+        }
+
+        $table = $wpdb->prefix . 'kbs_otp_attempts';
+        $exists = $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(1) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = %s",
+            $table
+        ));
+        if (!$exists) {
+            \update_option('kbs_otp_values_redacted', 1, false);
+            return;
+        }
+
+        $wpdb->query($wpdb->prepare(
+            "UPDATE {$table}
+             SET otp_code = %s
+             WHERE otp_code IS NOT NULL
+               AND otp_code <> %s
+               AND otp_code <> ''",
+            '******',
+            '******'
+        ));
+
+        \update_option('kbs_otp_values_redacted', 1, false);
     }
 }

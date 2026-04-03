@@ -19,7 +19,6 @@ export default function Registration() {
 	const [form] = Form.useForm();
 	const [step, setStep] = useState('form'); // 'form' | 'otp' | 'done'
 	const [otp, setOtp] = useState('');
-	const [serverOtp, setServerOtp] = useState('');
 	const [formData, setFormData] = useState({});
 	const [loading, setLoading] = useState(false);
 	const [errorMessage, setErrorMessage] = useState('');
@@ -191,7 +190,7 @@ export default function Registration() {
 							<Form.Item
 								label="Password"
 								name="password"
-								rules={[{ required: true, min: 6, message: "Minimum 6 characters" }]}
+								rules={[{ required: true, min: 8, message: "Minimum 8 characters" }]}
 							>
 								<Input.Password />
 							</Form.Item>

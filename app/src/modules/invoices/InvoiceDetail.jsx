@@ -1,3 +1,5 @@
+import RecordHistoryCard from "../../components/ui/RecordHistoryCard.jsx";
+
 const formatCurrency = (value) =>
     Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -8,6 +10,7 @@ export default function InvoiceDetail({ invoice }) {
 
     const items = invoice.items || [];
     const payments = invoice.payments || [];
+    const history = invoice.history || [];
 
     return (
         <div className="space-y-4">
@@ -117,6 +120,8 @@ export default function InvoiceDetail({ invoice }) {
                     <p>No payments recorded.</p>
                 )}
             </section>
+
+            <RecordHistoryCard title="Invoice Activity" entries={history} />
         </div>
     );
 }

@@ -98,7 +98,7 @@ export default function Login() {
             const response = await fetch("/wp-json/kbs/v1/verify-otp", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, otp }),
+                body: JSON.stringify({ email, otp, context: "login" }),
                 credentials: "include",
             });
 

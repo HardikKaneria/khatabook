@@ -19,23 +19,11 @@ export const getInvoices = (params = {}) =>
 export const getInvoice = (id) =>
     apiClient.get(`${BASE}/invoices/${id}`);
 
-const normalizeInvoicePayload = (payload = {}) => {
-    const prepared = { ...payload };
-    if (prepared.templateId !== undefined && prepared.template_id === undefined) {
-        prepared.template_id = prepared.templateId;
-        delete prepared.templateId;
-    }
-    if (prepared.template_id === "") {
-        prepared.template_id = null;
-    }
-    return prepared;
-};
-
 export const createInvoice = (payload = {}) =>
-    apiClient.post(`${BASE}/invoices`, normalizeInvoicePayload(payload));
+    apiClient.post(`${BASE}/invoices`, payload);
 
 export const updateInvoice = (id, payload = {}) =>
-    apiClient.put(`${BASE}/invoices/${id}`, normalizeInvoicePayload(payload));
+    apiClient.put(`${BASE}/invoices/${id}`, payload);
 
 export const payInvoice = (id, payload) =>
     apiClient.post(`${BASE}/invoices/${id}/pay`, payload);
