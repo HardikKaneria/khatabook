@@ -8,6 +8,7 @@ export default function ExpenseDetail({ expense }) {
 
     const isPaid = Boolean(expense.payment_journal_id);
     const history = expense.history || [];
+    const isBill = expense.document_type === "BILL";
 
     return (
         <div className="space-y-4">
@@ -16,11 +17,22 @@ export default function ExpenseDetail({ expense }) {
                     {expense.category}
                 </h2>
                 <p className="kb-muted" style={{ marginBottom: 8 }}>
-                    {expense.expense_date}
+                    {isBill ? "Vendor bill" : "Expense"} recorded on {expense.expense_date}
                 </p>
                 <p>
                     Payee: <strong>{expense.payee || "—"}</strong>
                 </p>
+                {isBill ? (
+                    <p>
+                        Bill Reference: <strong>{expense.reference_number || "—"}</strong>
+                    </p>
+                ) : null}
+                {isBill ? (
+                    <p>
+                        Due Date: <strong>{expense.due_date || "—"}</strong>
+                        {expense.is_overdue ? " (Overdue)" : expense.due_state === "DUE_TODAY" ? " (Due today)" : ""}
+                    </p>
+                ) : null}
                 {expense.contact?.type ? (
                     <p>
                         Contact Type: <strong>{expense.contact.type}</strong>
@@ -31,7 +43,7 @@ export default function ExpenseDetail({ expense }) {
                     ₹ {formatCurrency(expense.amount)} {expense.currency || "INR"}
                 </p>
                 <p className="kb-muted">
-                    Status: {expense.status || "POSTED"} · {isPaid ? "Paid" : "Unpaid"}
+                    Status: {expense.workflow_status || expense.status || "POSTED"} · {isPaid ? "Paid" : "Unpaid"}
                 </p>
                 <p className="kb-muted">
                     GST: {expense.gst_rate ? `${expense.gst_rate}%` : "No GST"} · Input credit {expense.is_gst_input_eligible ? "eligible" : "not eligible"}
@@ -46,7 +58,7 @@ export default function ExpenseDetail({ expense }) {
                         {expense.pay_from_account_name || expense.pay_from_account_id || ""}.
                     </p>
                 ) : (
-                    <p>No payment recorded for this expense yet.</p>
+                    <p>{isBill ? "This vendor bill is still open. A later settlement action is not available yet." : "No payment recorded for this expense yet."}</p>
                 )}
                 {!expense.can_archive && expense.archive_block_reason ? (
                     <p className="kb-muted" style={{ marginTop: 12 }}>

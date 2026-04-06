@@ -8,6 +8,7 @@ use WP_REST_Response;
 use WP_REST_Server;
 use KBS\Accounting\VyJournalEngine;
 use KBS\Core\RecordAuditLogger;
+use KBS\Core\SystemLogger;
 use KBS\Notifications\InternalDocumentNotifier;
 
 defined('ABSPATH') || exit;
@@ -73,6 +74,72 @@ class VyRestInvoices
         register_rest_route(VyRestAccounts::NS, '/payments', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [__CLASS__, 'list_payments'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/recurring', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'create_recurring_profile'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/recurring-invoices', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'list_recurring_profiles'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/recurring-invoices/(?P<id>\d+)', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'get_recurring_profile'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/recurring-invoices/(?P<id>\d+)', [
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => [__CLASS__, 'update_recurring_profile'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/recurring-invoices/(?P<id>\d+)/generate', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'generate_recurring_profile'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/notes', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'list_invoice_notes'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/notes', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'create_invoice_note'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/promises', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'list_promises'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/promises', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'list_invoice_promises'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/promises', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'create_invoice_promise'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/promises/(?P<id>\d+)', [
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => [__CLASS__, 'update_invoice_promise'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
     }
@@ -162,10 +229,18 @@ class VyRestInvoices
         $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params));
         $invoices = [];
         $contactMap = self::prime_contacts((int) $org, $rows ?: []);
+        $noteTotalsMap = vy_invoice_note_totals_map((int) $org);
 
         foreach ($rows as $row) {
             $paid = self::get_paid_amount((int) $row->id);
-            $balanceDue = max(0, (float) $row->total - $paid);
+            $financials = vy_invoice_apply_adjustments(
+                [
+                    'id' => (int) $row->id,
+                    'total' => (float) $row->total,
+                ],
+                $paid,
+                $noteTotalsMap[(int) $row->id] ?? null
+            );
             $invoices[] = [
                 'id'             => (int) $row->id,
                 'contact_id'     => $row->contact_id ? (int) $row->contact_id : null,
@@ -177,9 +252,12 @@ class VyRestInvoices
                 'subtotal'       => (float) $row->subtotal,
                 'tax_total'      => (float) $row->tax_total,
                 'total'          => (float) $row->total,
+                'adjusted_total' => (float) ($financials['adjusted_total'] ?? (float) $row->total),
                 'status'         => $row->status,
                 'paid_amount'    => $paid,
-                'balance_due'    => $balanceDue,
+                'credit_total'   => (float) ($financials['credit_total'] ?? 0),
+                'debit_total'    => (float) ($financials['debit_total'] ?? 0),
+                'balance_due'    => (float) ($financials['balance_due'] ?? 0),
             ];
         }
 
@@ -203,116 +281,12 @@ class VyRestInvoices
         $org = \vy_get_current_org_id();
         if (is_wp_error($org)) return $org;
 
-        global $wpdb;
-        $body = $request->get_json_params();
-        $items = $body['items'] ?? [];
-        if (!$items || !is_array($items)) {
-            return new WP_Error('vy_no_items', 'At least one item is required.', ['status' => 400]);
+        $created = self::create_invoice_record((int) $org, $request->get_json_params() ?: []);
+        if (is_wp_error($created)) {
+            return $created;
         }
 
-        $contactData = self::resolve_customer_contact((int) $org, $body);
-        if (is_wp_error($contactData)) {
-            return $contactData;
-        }
-
-        $invoiceNumber = sanitize_text_field($body['invoice_number'] ?? '');
-        $date = sanitize_text_field($body['date'] ?? gmdate('Y-m-d'));
-        $dueInput = isset($body['due_date']) ? sanitize_text_field($body['due_date']) : null;
-        $status = strtoupper($body['status'] ?? 'SENT');
-        if (!$invoiceNumber) {
-            $invoiceNumber = self::generate_invoice_number((int) $org, $date);
-        }
-        $due = self::resolve_due_date((int) $org, $date, $dueInput);
-        $templateId = self::resolve_template_id((int) $org);
-
-        $totals = self::calculate_totals($items);
-
-        $inserted = $wpdb->insert(
-            $wpdb->prefix . 'vy_invoices',
-            [
-                'org_id'        => $org,
-                'contact_id'    => $contactData['contact_id'],
-                'invoice_number'=> $invoiceNumber,
-                'customer_name' => $contactData['name'],
-                'customer_email'=> $contactData['email'],
-                'customer_phone'=> $contactData['phone'],
-                'date'          => $date,
-                'due_date'      => $due,
-                'currency'      => strtoupper($body['currency'] ?? 'INR'),
-                'subtotal'      => $totals['subtotal'],
-                'tax_total'     => $totals['tax_total'],
-                'total'         => $totals['total'],
-                'status'        => in_array($status, ['DRAFT','SENT','PARTIAL','PAID','VOID'], true) ? $status : 'SENT',
-                'template_id'   => $templateId,
-                'notes'         => wp_kses_post($body['notes'] ?? ''),
-                'created_at'    => current_time('mysql', true),
-                'updated_at'    => current_time('mysql', true),
-            ],
-            ['%d','%d','%s','%s','%s','%s','%s','%s','%s','%f','%f','%f','%s','%s','%s','%s','%s']
-        );
-
-        if ($inserted === false) {
-            return new WP_Error('vy_invoice_insert_failed', 'Failed to create invoice.', ['status' => 500]);
-        }
-        $invoice_id = (int) $wpdb->insert_id;
-
-        $items_table = $wpdb->prefix . 'vy_invoice_items';
-        foreach ($totals['lines'] as $line) {
-            $wpdb->insert(
-                $items_table,
-                [
-                    'org_id'     => $org,
-                    'invoice_id' => $invoice_id,
-                    'description'=> $line['description'],
-                    'quantity'   => $line['quantity'],
-                    'unit_price' => $line['unit_price'],
-                    'tax_rate'   => $line['tax_rate'],
-                    'tax_amount' => $line['tax_amount'],
-                    'tax_type'   => $line['tax_type'],
-                    'line_total' => $line['line_total'],
-                    'created_at' => current_time('mysql', true),
-                ],
-                ['%d','%d','%s','%f','%f','%f','%f','%s','%s']
-            );
-        }
-
-        $responsePayload = ['id' => $invoice_id];
-        RecordAuditLogger::log(
-            (int) $org,
-            'invoice',
-            $invoice_id,
-            'created',
-            sprintf('Created invoice %s', $invoiceNumber),
-            [
-                'lines' => [
-                    'Customer: ' . ($contactData['name'] ?: 'Walk-in customer'),
-                    'Status: ' . (in_array($status, ['DRAFT','SENT','PARTIAL','PAID','VOID'], true) ? $status : 'SENT'),
-                    'Items: ' . count($totals['lines']),
-                    'Total: ' . RecordAuditLogger::money((float) $totals['total'], strtoupper((string) ($body['currency'] ?? 'INR'))),
-                ],
-            ]
-        );
-
-        $settings = vy_fetch_invoice_template_settings((int) $org);
-        if (!empty($settings['auto_email_on_create'])) {
-            $emailResult = vy_send_invoice_email($invoice_id);
-            if (is_wp_error($emailResult)) {
-                error_log(sprintf('[Vyavhar] Auto email failed for invoice %d: %s', $invoice_id, $emailResult->get_error_message()));
-                $responsePayload['email_error'] = $emailResult->get_error_message();
-            } else {
-                $responsePayload['email_sent_to'] = $emailResult['recipients'];
-                $responsePayload['email_sent_at'] = $emailResult['sent_at'];
-                self::log_invoice_email_audit((int) $org, $invoice_id, $invoiceNumber, $emailResult);
-            }
-        }
-
-        try {
-            InternalDocumentNotifier::notify_invoice_created((int) $org, $invoice_id);
-        } catch (\Throwable $throwable) {
-            error_log(sprintf('[Vyavhar Email] Internal invoice notification failed for invoice %d: %s', $invoice_id, $throwable->getMessage()));
-        }
-
-        return new WP_REST_Response($responsePayload, 201);
+        return new WP_REST_Response($created, 201);
     }
 
     public static function get_invoice(WP_REST_Request $request)
@@ -328,11 +302,11 @@ class VyRestInvoices
         $items = self::fetch_invoice_items((int) $org, (int) $invoice['id']);
         $payments = self::get_invoice_payments((int) $org, $invoice['id']);
 
-        $paidTotal = self::get_paid_amount($invoice['id']);
-        $invoice['paid_amount'] = $paidTotal;
-        $invoice['balance_due'] = max(0, (float) $invoice['total'] - $paidTotal);
+        $invoice = self::apply_invoice_financials((int) $org, $invoice);
         $invoice['items'] = $items ?: [];
         $invoice['payments'] = $payments;
+        $invoice['adjustments'] = self::fetch_invoice_notes((int) $org, (int) $invoice['id']);
+        $invoice['promises'] = self::fetch_invoice_promises((int) $org, ['invoice_id' => (int) $invoice['id']]);
         $editState = vy_invoice_edit_state($invoice, $payments);
         $invoice['can_edit'] = $editState['can_edit'];
         $invoice['edit_block_reason'] = $editState['reason'];
@@ -340,6 +314,16 @@ class VyRestInvoices
         if ($invoice['contact_id']) {
             $invoice['contact'] = self::format_contact_summary(self::fetch_contact((int) $org, $invoice['contact_id']));
         }
+        $sourceRecurringProfile = self::find_recurring_profile_by_source((int) $org, (int) $invoice['id']);
+        $invoice['source_recurring_profile'] = $sourceRecurringProfile
+            ? self::format_recurring_profile_row((int) $org, $sourceRecurringProfile, false)
+            : null;
+        $recurringProfile = !empty($invoice['recurring_profile_id'])
+            ? self::fetch_recurring_profile((int) $org, (int) $invoice['recurring_profile_id'])
+            : null;
+        $invoice['recurring_profile'] = $recurringProfile
+            ? self::format_recurring_profile_row((int) $org, $recurringProfile, false)
+            : null;
         $invoice['history'] = RecordAuditLogger::list_for_record((int) $org, 'invoice', (int) $invoice['id']);
 
         return new WP_REST_Response($invoice, 200);
@@ -359,7 +343,7 @@ class VyRestInvoices
         }
 
         $payments = self::get_invoice_payments((int) $org, (int) $invoice['id']);
-        $invoice['paid_amount'] = self::get_paid_amount((int) $invoice['id']);
+        $invoice = self::apply_invoice_financials((int) $org, $invoice);
         $editState = vy_invoice_edit_state($invoice, $payments);
         if (!$editState['can_edit']) {
             return new WP_Error('vy_invoice_locked', $editState['reason'] ?: 'This invoice can no longer be edited.', ['status' => 400]);
@@ -543,14 +527,18 @@ class VyRestInvoices
             return new WP_Error('vy_invalid_income', 'The income account must be of type INCOME.', ['status' => 400]);
         }
 
-        $alreadyPaid = self::get_paid_amount($invoice['id']);
-        $outstanding = max(0, (float) $invoice['total'] - $alreadyPaid);
+        $financials = self::apply_invoice_financials((int) $org, $invoice);
+        $alreadyPaid = (float) ($financials['paid_amount'] ?? 0);
+        $outstanding = (float) ($financials['balance_due'] ?? 0);
         if ($outstanding <= 0) {
             return new WP_Error('vy_invoice_paid', 'Invoice is already fully paid.', ['status' => 400]);
         }
         if ($amount > $outstanding + 0.01) {
             return new WP_Error('vy_amount_exceeds', 'Payment exceeds outstanding balance.', ['status' => 400]);
         }
+
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
 
         $journalResult = VyJournalEngine::create_journal_entry([
             'org_id'        => (int) $org,
@@ -577,10 +565,10 @@ class VyRestInvoices
         ]);
 
         if (is_wp_error($journalResult)) {
+            $wpdb->query('ROLLBACK');
             return $journalResult;
         }
 
-        global $wpdb;
         $paymentInserted = $wpdb->insert(
             $wpdb->prefix . 'vy_invoice_payments',
             [
@@ -593,17 +581,50 @@ class VyRestInvoices
             ],
             ['%d','%d','%d','%f','%s','%s']
         );
-        $paymentId = $paymentInserted === false ? 0 : (int) $wpdb->insert_id;
+        if ($paymentInserted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_payment_insert_failed', 'Failed to record invoice payment.', ['status' => 500]);
+        }
+        $paymentId = (int) $wpdb->insert_id;
 
+        $updatedInvoiceForBalance = self::apply_invoice_financials((int) $org, $invoice);
         $paidTotal = self::get_paid_amount($invoice['id']);
-        $status = self::determine_invoice_status($invoice['status'], (float) $invoice['total'], $paidTotal);
-        $wpdb->update(
+        $status = self::determine_invoice_status((string) ($invoice['status'] ?? 'SENT'), (float) ($updatedInvoiceForBalance['adjusted_total'] ?? $invoice['total']), $paidTotal);
+        $updated = $wpdb->update(
             $wpdb->prefix . 'vy_invoices',
             ['status' => $status, 'updated_at' => current_time('mysql', true)],
             ['id' => $invoice['id']],
             ['%s','%s'],
             ['%d']
         );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_invoice_status_update_failed', 'Failed to update invoice status after payment.', ['status' => 500]);
+        }
+
+        $wpdb->query('COMMIT');
+
+        $openPromises = self::fetch_open_invoice_promises((int) $org, (int) $invoice['id']);
+        foreach ($openPromises as $promise) {
+            $shouldKeep = $amount + 0.01 >= (float) ($promise['promised_amount'] ?? 0)
+                || max(0, (float) (($updatedInvoiceForBalance['adjusted_total'] ?? $invoice['total']) - $paidTotal)) <= 0;
+            if (!$shouldKeep) {
+                continue;
+            }
+
+            $wpdb->update(
+                $wpdb->prefix . 'vy_invoice_promises',
+                [
+                    'status' => 'KEPT',
+                    'resolved_at' => current_time('mysql', true),
+                    'updated_at' => current_time('mysql', true),
+                ],
+                ['org_id' => (int) $org, 'id' => (int) ($promise['id'] ?? 0)],
+                ['%s', '%s', '%s'],
+                ['%d', '%d']
+            );
+        }
 
         if ($paymentId > 0) {
             RecordAuditLogger::log(
@@ -617,7 +638,7 @@ class VyRestInvoices
                         'Invoice: ' . (string) ($invoice['invoice_number'] ?? '—'),
                         'Payment date: ' . (string) ($body['date'] ?? gmdate('Y-m-d')),
                         'Journal: #' . (int) $journalResult,
-                        'Balance due: ' . RecordAuditLogger::money(max(0, (float) $invoice['total'] - $paidTotal), (string) ($invoice['currency'] ?? 'INR')),
+                        'Balance due: ' . RecordAuditLogger::money(max(0, (float) (($updatedInvoiceForBalance['adjusted_total'] ?? $invoice['total']) - $paidTotal)), (string) ($invoice['currency'] ?? 'INR')),
                     ],
                 ],
                 'invoice',
@@ -631,7 +652,7 @@ class VyRestInvoices
             'payment_id'     => $paymentId > 0 ? $paymentId : null,
             'journal_id'     => $journalResult,
             'paid_amount'    => $paidTotal,
-            'balance_due'    => max(0, (float) $invoice['total'] - $paidTotal),
+            'balance_due'    => max(0, (float) (($updatedInvoiceForBalance['adjusted_total'] ?? $invoice['total']) - $paidTotal)),
             'invoice_status' => $status,
         ], 201);
     }
@@ -724,6 +745,8 @@ class VyRestInvoices
             $invoice = self::fetch_invoice((int) $org, (int) ($row['invoice_id'] ?? 0));
             $account = self::fetch_payment_account_summary((int) $org, !empty($row['journal_id']) ? (int) $row['journal_id'] : 0);
 
+            $financials = $invoice ? self::apply_invoice_financials((int) $org, $invoice) : null;
+
             return [
                 'id'         => (int) ($row['id'] ?? 0),
                 'amount'     => (float) ($row['amount'] ?? 0),
@@ -736,7 +759,7 @@ class VyRestInvoices
                     'invoice_number' => (string) ($invoice['invoice_number'] ?? ''),
                     'customer_name'  => (string) ($invoice['customer_name'] ?? ''),
                     'status'         => (string) ($invoice['status'] ?? ''),
-                    'balance_due'    => max(0, (float) ($invoice['total'] ?? 0) - self::get_paid_amount((int) ($invoice['id'] ?? 0))),
+                    'balance_due'    => (float) ($financials['balance_due'] ?? 0),
                 ] : null,
                 'account'    => $account,
             ];
@@ -750,6 +773,1453 @@ class VyRestInvoices
                 'total'    => $total,
             ],
         ], 200);
+    }
+
+    public static function ensure_recurring_runner(): void
+    {
+        if (!function_exists('wp_next_scheduled') || !function_exists('wp_schedule_event')) {
+            return;
+        }
+
+        if (!wp_next_scheduled('kbs_process_recurring_invoices')) {
+            wp_schedule_event(time() + 300, 'hourly', 'kbs_process_recurring_invoices');
+        }
+    }
+
+    public static function clear_recurring_runner(): void
+    {
+        if (function_exists('wp_clear_scheduled_hook')) {
+            wp_clear_scheduled_hook('kbs_process_recurring_invoices');
+        }
+    }
+
+    public static function process_due_recurring_profiles(): void
+    {
+        self::run_due_recurring_profiles();
+    }
+
+    public static function list_recurring_profiles(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_invoice_recurring_profiles';
+        $where = ['org_id = %d'];
+        $params = [(int) $org];
+
+        $status = strtoupper(sanitize_text_field((string) ($request->get_param('status') ?? '')));
+        if (in_array($status, ['ACTIVE', 'PAUSED', 'ENDED'], true)) {
+            $where[] = 'status = %s';
+            $params[] = $status;
+        }
+
+        $sourceInvoiceId = (int) ($request->get_param('source_invoice_id') ?? 0);
+        if ($sourceInvoiceId > 0) {
+            $where[] = 'source_invoice_id = %d';
+            $params[] = $sourceInvoiceId;
+        }
+
+        $page = max(1, (int) ($request->get_param('page') ?? 1));
+        $perPage = min(50, max(1, (int) ($request->get_param('per_page') ?? 10)));
+        $offset = ($page - 1) * $perPage;
+        $whereSql = implode(' AND ', $where);
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT *
+             FROM {$table}
+             WHERE {$whereSql}
+             ORDER BY status ASC, next_run_date ASC, id DESC
+             LIMIT %d OFFSET %d",
+            ...array_merge($params, [$perPage, $offset])
+        ), ARRAY_A);
+
+        $total = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(1) FROM {$table} WHERE {$whereSql}",
+            ...$params
+        ));
+
+        $data = array_map(static function (array $row) use ($org): array {
+            return self::format_recurring_profile_row((int) $org, $row, false);
+        }, $rows ?: []);
+
+        return new WP_REST_Response([
+            'data' => $data,
+            'pagination' => [
+                'page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+            ],
+        ], 200);
+    }
+
+    public static function get_recurring_profile(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $profile = self::fetch_recurring_profile((int) $org, (int) $request['id']);
+        if (!$profile) {
+            return new WP_Error('vy_not_found', 'Recurring profile not found.', ['status' => 404]);
+        }
+
+        return new WP_REST_Response(self::format_recurring_profile_row((int) $org, $profile, true), 200);
+    }
+
+    public static function create_recurring_profile(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $sourceInvoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$sourceInvoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+
+        if (strtoupper((string) ($sourceInvoice['status'] ?? 'SENT')) === 'VOID') {
+            return new WP_Error('vy_invoice_void', 'Void invoices cannot be used for recurring billing.', ['status' => 400]);
+        }
+
+        $existingProfile = self::find_recurring_profile_by_source((int) $org, (int) $sourceInvoice['id']);
+        if ($existingProfile && in_array(strtoupper((string) ($existingProfile['status'] ?? 'ACTIVE')), ['ACTIVE', 'PAUSED'], true)) {
+            return new WP_Error('vy_recurring_exists', 'This invoice already has an active recurring plan.', ['status' => 400]);
+        }
+
+        $sourceItems = self::fetch_invoice_items((int) $org, (int) $sourceInvoice['id']);
+        if (!$sourceItems) {
+            return new WP_Error('vy_no_items', 'Recurring billing requires at least one invoice item.', ['status' => 400]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $payload = self::sanitize_recurring_profile_payload((int) $org, $sourceInvoice, $body);
+        $recurringContactId = !empty($sourceInvoice['contact_id']) ? (int) $sourceInvoice['contact_id'] : null;
+        if (!$recurringContactId && !empty($sourceInvoice['customer_name'])) {
+            $resolvedContact = self::resolve_customer_contact((int) $org, [
+                'customer_name' => (string) ($sourceInvoice['customer_name'] ?? ''),
+                'customer_email' => (string) ($sourceInvoice['customer_email'] ?? ''),
+                'customer_phone' => (string) ($sourceInvoice['customer_phone'] ?? ''),
+            ]);
+            if (is_wp_error($resolvedContact)) {
+                return $resolvedContact;
+            }
+            $recurringContactId = !empty($resolvedContact['contact_id']) ? (int) $resolvedContact['contact_id'] : null;
+        }
+
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
+
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'vy_invoice_recurring_profiles',
+            [
+                'org_id' => (int) $org,
+                'source_invoice_id' => (int) $sourceInvoice['id'],
+                'contact_id' => $recurringContactId,
+                'profile_name' => $payload['profile_name'],
+                'customer_name' => (string) ($sourceInvoice['customer_name'] ?? ''),
+                'customer_email' => (string) ($sourceInvoice['customer_email'] ?? ''),
+                'customer_phone' => (string) ($sourceInvoice['customer_phone'] ?? ''),
+                'start_date' => $payload['start_date'],
+                'end_date' => $payload['end_date'],
+                'frequency' => $payload['frequency'],
+                'interval_count' => $payload['interval_count'],
+                'due_days' => $payload['due_days'],
+                'currency' => $payload['currency'],
+                'invoice_status' => $payload['invoice_status'],
+                'notes' => $payload['notes'],
+                'status' => $payload['status'],
+                'next_run_date' => $payload['next_run_date'],
+                'created_at' => current_time('mysql', true),
+                'updated_at' => current_time('mysql', true),
+            ],
+            ['%d', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+        );
+
+        if ($inserted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_recurring_insert_failed', 'Failed to create recurring billing profile.', ['status' => 500]);
+        }
+
+        $profileId = (int) $wpdb->insert_id;
+        foreach ($sourceItems as $item) {
+            $itemInserted = $wpdb->insert(
+                $wpdb->prefix . 'vy_invoice_recurring_items',
+                [
+                    'org_id' => (int) $org,
+                    'profile_id' => $profileId,
+                    'description' => sanitize_text_field((string) ($item['description'] ?? '')),
+                    'quantity' => (float) ($item['quantity'] ?? 0),
+                    'unit_price' => (float) ($item['unit_price'] ?? 0),
+                    'tax_rate' => (float) ($item['tax_rate'] ?? 0),
+                    'tax_amount' => (float) ($item['tax_amount'] ?? 0),
+                    'tax_type' => sanitize_text_field((string) ($item['tax_type'] ?? 'GST')),
+                    'line_total' => (float) ($item['line_total'] ?? 0),
+                    'created_at' => current_time('mysql', true),
+                ],
+                ['%d', '%d', '%s', '%f', '%f', '%f', '%f', '%s', '%f', '%s']
+            );
+
+            if ($itemInserted === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('vy_recurring_item_insert_failed', 'Failed to save recurring invoice items.', ['status' => 500]);
+            }
+        }
+
+        $wpdb->query('COMMIT');
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            (int) $sourceInvoice['id'],
+            'recurring_enabled',
+            sprintf('Created recurring plan for invoice %s', (string) ($sourceInvoice['invoice_number'] ?? '')),
+            [
+                'lines' => [
+                    'Plan: ' . $payload['profile_name'],
+                    'Frequency: ' . $payload['interval_count'] . ' x ' . strtolower($payload['frequency']),
+                    'First run: ' . $payload['next_run_date'],
+                    'Generated invoices default to: ' . $payload['invoice_status'],
+                ],
+            ],
+            'recurring_profile',
+            $profileId
+        );
+
+        $profile = self::fetch_recurring_profile((int) $org, $profileId);
+        return new WP_REST_Response(self::format_recurring_profile_row((int) $org, $profile ?: [], true), 201);
+    }
+
+    public static function update_recurring_profile(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $profile = self::fetch_recurring_profile((int) $org, (int) $request['id']);
+        if (!$profile) {
+            return new WP_Error('vy_not_found', 'Recurring profile not found.', ['status' => 404]);
+        }
+
+        $payload = self::sanitize_recurring_profile_update_payload($profile, $request->get_json_params() ?: []);
+        if (!$payload) {
+            return new WP_Error('vy_recurring_no_fields', 'No recurring fields were provided.', ['status' => 400]);
+        }
+
+        global $wpdb;
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'vy_invoice_recurring_profiles',
+            array_merge($payload, ['updated_at' => current_time('mysql', true)]),
+            [
+                'org_id' => (int) $org,
+                'id' => (int) $profile['id'],
+            ],
+            null,
+            ['%d', '%d']
+        );
+
+        if ($updated === false) {
+            return new WP_Error('vy_recurring_update_failed', 'Failed to update recurring profile.', ['status' => 500]);
+        }
+
+        $refreshed = self::fetch_recurring_profile((int) $org, (int) $profile['id']);
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            (int) ($profile['source_invoice_id'] ?? 0),
+            'recurring_updated',
+            sprintf('Updated recurring plan %s', (string) ($profile['profile_name'] ?? ('#' . $profile['id']))),
+            [
+                'lines' => self::build_recurring_update_audit_lines($profile, $refreshed ?: $profile),
+            ],
+            'recurring_profile',
+            (int) $profile['id']
+        );
+
+        return new WP_REST_Response(self::format_recurring_profile_row((int) $org, $refreshed ?: [], true), 200);
+    }
+
+    public static function generate_recurring_profile(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $profile = self::fetch_recurring_profile((int) $org, (int) $request['id']);
+        if (!$profile) {
+            return new WP_Error('vy_not_found', 'Recurring profile not found.', ['status' => 404]);
+        }
+
+        $asOfDate = self::normalize_date_input($request->get_param('as_of'), gmdate('Y-m-d'));
+        $generated = self::run_due_recurring_profiles((int) $org, (int) $profile['id'], $asOfDate);
+        if (is_wp_error($generated)) {
+            return $generated;
+        }
+
+        $refreshed = self::fetch_recurring_profile((int) $org, (int) $profile['id']);
+        return new WP_REST_Response([
+            'success' => true,
+            'generated' => $generated,
+            'profile' => $refreshed ? self::format_recurring_profile_row((int) $org, $refreshed, true) : null,
+        ], 200);
+    }
+
+    public static function list_invoice_notes(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $invoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$invoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+
+        return new WP_REST_Response([
+            'data' => self::fetch_invoice_notes((int) $org, (int) $invoice['id']),
+        ], 200);
+    }
+
+    public static function create_invoice_note(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $invoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$invoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+        if (strtoupper((string) ($invoice['status'] ?? 'SENT')) === 'VOID') {
+            return new WP_Error('vy_invoice_void', 'Invoice adjustments are not allowed for void invoices.', ['status' => 400]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $noteType = strtoupper(sanitize_text_field((string) ($body['note_type'] ?? '')));
+        if (!in_array($noteType, ['CREDIT', 'DEBIT'], true)) {
+            return new WP_Error('vy_bad_note_type', 'Note type must be CREDIT or DEBIT.', ['status' => 400]);
+        }
+
+        $amount = round((float) ($body['amount'] ?? 0), 2);
+        if ($amount <= 0) {
+            return new WP_Error('vy_bad_amount', 'Adjustment amount must be greater than zero.', ['status' => 400]);
+        }
+
+        $noteDate = self::normalize_date_input($body['note_date'] ?? null, gmdate('Y-m-d'));
+        $reason = wp_kses_post((string) ($body['reason'] ?? ''));
+
+        $financials = self::apply_invoice_financials((int) $org, $invoice);
+        if ($noteType === 'CREDIT' && $amount > (float) ($financials['balance_due'] ?? 0)) {
+            return new WP_Error('vy_credit_too_large', 'Credit notes cannot exceed the current balance due.', ['status' => 400]);
+        }
+
+        global $wpdb;
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'vy_invoice_notes',
+            [
+                'org_id' => (int) $org,
+                'invoice_id' => (int) $invoice['id'],
+                'note_number' => self::generate_invoice_note_number((int) $org, $noteType, $noteDate),
+                'note_type' => $noteType,
+                'note_date' => $noteDate,
+                'amount' => $amount,
+                'reason' => $reason,
+                'status' => 'POSTED',
+                'created_at' => current_time('mysql', true),
+                'updated_at' => current_time('mysql', true),
+            ],
+            ['%d', '%d', '%s', '%s', '%s', '%f', '%s', '%s', '%s', '%s']
+        );
+
+        if ($inserted === false) {
+            return new WP_Error('vy_note_insert_failed', 'Failed to save invoice note.', ['status' => 500]);
+        }
+
+        $noteId = (int) $wpdb->insert_id;
+        $notes = self::fetch_invoice_notes((int) $org, (int) $invoice['id']);
+        $createdNote = null;
+        foreach ($notes as $note) {
+            if ((int) ($note['id'] ?? 0) === $noteId) {
+                $createdNote = $note;
+                break;
+            }
+        }
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            (int) $invoice['id'],
+            strtolower($noteType) . '_note_created',
+            sprintf('Added %s note %s', strtolower($noteType), (string) ($createdNote['note_number'] ?? ('#' . $noteId))),
+            [
+                'lines' => [
+                    'Amount: ' . RecordAuditLogger::money($amount, (string) ($invoice['currency'] ?? 'INR')),
+                    'Date: ' . $noteDate,
+                    $reason !== '' ? 'Reason: ' . wp_strip_all_tags($reason) : '',
+                ],
+            ]
+        );
+
+        return new WP_REST_Response([
+            'note' => $createdNote,
+            'financials' => self::apply_invoice_financials((int) $org, $invoice),
+        ], 201);
+    }
+
+    public static function list_promises(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $filters = [
+            'status' => $request->get_param('status'),
+            'invoice_id' => $request->get_param('invoice_id'),
+            'contact_id' => $request->get_param('contact_id'),
+            'view' => $request->get_param('view'),
+        ];
+
+        return new WP_REST_Response([
+            'data' => self::fetch_invoice_promises((int) $org, $filters),
+        ], 200);
+    }
+
+    public static function list_invoice_promises(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $invoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$invoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+
+        return new WP_REST_Response([
+            'data' => self::fetch_invoice_promises((int) $org, ['invoice_id' => (int) $invoice['id']]),
+        ], 200);
+    }
+
+    public static function create_invoice_promise(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $invoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$invoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+        if (strtoupper((string) ($invoice['status'] ?? 'SENT')) === 'VOID') {
+            return new WP_Error('vy_invoice_void', 'Promises are not allowed for void invoices.', ['status' => 400]);
+        }
+
+        $financials = self::apply_invoice_financials((int) $org, $invoice);
+        if ((float) ($financials['balance_due'] ?? 0) <= 0) {
+            return new WP_Error('vy_invoice_paid', 'Promises can only be recorded for invoices with an outstanding balance.', ['status' => 400]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $promisedDate = self::normalize_date_input($body['promised_date'] ?? null, null);
+        if (!$promisedDate) {
+            return new WP_Error('vy_bad_promised_date', 'A promised payment date is required.', ['status' => 400]);
+        }
+
+        $promisedAmount = round((float) ($body['promised_amount'] ?? 0), 2);
+        if ($promisedAmount <= 0 || $promisedAmount > (float) ($financials['balance_due'] ?? 0)) {
+            return new WP_Error('vy_bad_promised_amount', 'Promised amount must be greater than zero and within the current balance due.', ['status' => 400]);
+        }
+
+        $notes = wp_kses_post((string) ($body['notes'] ?? ''));
+
+        global $wpdb;
+        $existingOpen = self::fetch_open_invoice_promises((int) $org, (int) $invoice['id']);
+        foreach ($existingOpen as $openPromise) {
+            $wpdb->update(
+                $wpdb->prefix . 'vy_invoice_promises',
+                [
+                    'status' => 'SUPERSEDED',
+                    'resolved_at' => current_time('mysql', true),
+                    'updated_at' => current_time('mysql', true),
+                ],
+                ['org_id' => (int) $org, 'id' => (int) ($openPromise['id'] ?? 0)],
+                ['%s', '%s', '%s'],
+                ['%d', '%d']
+            );
+        }
+
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'vy_invoice_promises',
+            [
+                'org_id' => (int) $org,
+                'invoice_id' => (int) $invoice['id'],
+                'contact_id' => !empty($invoice['contact_id']) ? (int) $invoice['contact_id'] : null,
+                'promised_date' => $promisedDate,
+                'promised_amount' => $promisedAmount,
+                'notes' => $notes,
+                'status' => 'OPEN',
+                'created_at' => current_time('mysql', true),
+                'updated_at' => current_time('mysql', true),
+            ],
+            ['%d', '%d', '%d', '%s', '%f', '%s', '%s', '%s', '%s']
+        );
+
+        if ($inserted === false) {
+            return new WP_Error('vy_promise_insert_failed', 'Failed to save the payment promise.', ['status' => 500]);
+        }
+
+        $promiseId = (int) $wpdb->insert_id;
+        $promise = self::fetch_promise((int) $org, $promiseId);
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            (int) $invoice['id'],
+            'promise_recorded',
+            'Recorded promise to pay',
+            [
+                'lines' => [
+                    'Promised date: ' . $promisedDate,
+                    'Promised amount: ' . RecordAuditLogger::money($promisedAmount, (string) ($invoice['currency'] ?? 'INR')),
+                    $notes !== '' ? 'Notes: ' . wp_strip_all_tags($notes) : '',
+                ],
+            ]
+        );
+
+        return new WP_REST_Response([
+            'promise' => $promise ? self::format_promise_row((int) $org, $promise) : null,
+        ], 201);
+    }
+
+    public static function update_invoice_promise(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $promise = self::fetch_promise((int) $org, (int) $request['id']);
+        if (!$promise) {
+            return new WP_Error('vy_not_found', 'Payment promise not found.', ['status' => 404]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $payload = [];
+
+        if (array_key_exists('promised_date', $body)) {
+            $promisedDate = self::normalize_date_input($body['promised_date'], (string) ($promise['promised_date'] ?? ''));
+            if ($promisedDate) {
+                $payload['promised_date'] = $promisedDate;
+            }
+        }
+
+        if (array_key_exists('promised_amount', $body)) {
+            $invoice = self::fetch_invoice((int) $org, (int) ($promise['invoice_id'] ?? 0));
+            $financials = $invoice ? self::apply_invoice_financials((int) $org, $invoice) : null;
+            $promisedAmount = round((float) $body['promised_amount'], 2);
+            if ($promisedAmount <= 0 || ($financials && $promisedAmount > (float) ($financials['balance_due'] ?? 0))) {
+                return new WP_Error('vy_bad_promised_amount', 'Promised amount must be within the current balance due.', ['status' => 400]);
+            }
+            $payload['promised_amount'] = $promisedAmount;
+        }
+
+        if (array_key_exists('notes', $body)) {
+            $payload['notes'] = wp_kses_post((string) $body['notes']);
+        }
+
+        if (array_key_exists('resolution_note', $body)) {
+            $payload['resolution_note'] = sanitize_text_field((string) $body['resolution_note']);
+        }
+
+        if (array_key_exists('status', $body)) {
+            $status = strtoupper(sanitize_text_field((string) $body['status']));
+            if (!in_array($status, ['OPEN', 'KEPT', 'BROKEN', 'CANCELLED', 'SUPERSEDED'], true)) {
+                return new WP_Error('vy_bad_promise_status', 'Invalid promise status.', ['status' => 400]);
+            }
+            $payload['status'] = $status;
+            $payload['resolved_at'] = $status === 'OPEN' ? null : current_time('mysql', true);
+        }
+
+        if (!$payload) {
+            return new WP_Error('vy_promise_no_fields', 'No promise changes were provided.', ['status' => 400]);
+        }
+
+        $payload['updated_at'] = current_time('mysql', true);
+
+        global $wpdb;
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'vy_invoice_promises',
+            $payload,
+            ['org_id' => (int) $org, 'id' => (int) $promise['id']],
+            null,
+            ['%d', '%d']
+        );
+
+        if ($updated === false) {
+            return new WP_Error('vy_promise_update_failed', 'Failed to update the payment promise.', ['status' => 500]);
+        }
+
+        $refreshed = self::fetch_promise((int) $org, (int) $promise['id']);
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice',
+            (int) ($promise['invoice_id'] ?? 0),
+            'promise_updated',
+            'Updated promise to pay',
+            [
+                'lines' => self::build_promise_update_audit_lines($promise, $refreshed ?: $promise),
+            ]
+        );
+
+        return new WP_REST_Response([
+            'promise' => $refreshed ? self::format_promise_row((int) $org, $refreshed) : null,
+        ], 200);
+    }
+
+    private static function create_invoice_record(int $org, array $body, array $options = [])
+    {
+        global $wpdb;
+
+        $items = $body['items'] ?? [];
+        if (!$items || !is_array($items)) {
+            return new WP_Error('vy_no_items', 'At least one item is required.', ['status' => 400]);
+        }
+
+        $wpdb->query('START TRANSACTION');
+
+        $contactData = self::resolve_customer_contact($org, $body);
+        if (is_wp_error($contactData)) {
+            $wpdb->query('ROLLBACK');
+            return $contactData;
+        }
+
+        $invoiceNumber = sanitize_text_field((string) ($options['force_invoice_number'] ?? ($body['invoice_number'] ?? '')));
+        $date = self::normalize_date_input($body['date'] ?? null, gmdate('Y-m-d'));
+        $dueInput = array_key_exists('due_date', $body)
+            ? sanitize_text_field((string) $body['due_date'])
+            : null;
+        $status = strtoupper((string) ($body['status'] ?? 'SENT'));
+        if (!$invoiceNumber) {
+            $invoiceNumber = self::generate_invoice_number($org, $date);
+        }
+        $due = self::resolve_due_date($org, $date, $dueInput);
+        $templateId = self::resolve_template_id($org);
+        $currency = strtoupper(sanitize_text_field((string) ($body['currency'] ?? 'INR')));
+        if ($currency === '') {
+            $currency = 'INR';
+        }
+
+        $totals = self::calculate_totals($items);
+        $timestamp = current_time('mysql', true);
+
+        $inserted = $wpdb->insert(
+            $wpdb->prefix . 'vy_invoices',
+            [
+                'org_id' => $org,
+                'contact_id' => $contactData['contact_id'],
+                'invoice_number' => $invoiceNumber,
+                'customer_name' => $contactData['name'],
+                'customer_email' => $contactData['email'],
+                'customer_phone' => $contactData['phone'],
+                'date' => $date,
+                'due_date' => $due,
+                'currency' => $currency,
+                'subtotal' => $totals['subtotal'],
+                'tax_total' => $totals['tax_total'],
+                'total' => $totals['total'],
+                'status' => in_array($status, ['DRAFT', 'SENT', 'PARTIAL', 'PAID', 'VOID'], true) ? $status : 'SENT',
+                'template_id' => $templateId,
+                'notes' => wp_kses_post($body['notes'] ?? ''),
+                'recurring_profile_id' => !empty($options['recurring_profile_id']) ? (int) $options['recurring_profile_id'] : null,
+                'created_at' => $timestamp,
+                'updated_at' => $timestamp,
+            ],
+            ['%d','%d','%s','%s','%s','%s','%s','%s','%s','%f','%f','%f','%s','%s','%s','%d','%s','%s']
+        );
+
+        if ($inserted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_invoice_insert_failed', 'Failed to create invoice.', ['status' => 500]);
+        }
+        $invoiceId = (int) $wpdb->insert_id;
+
+        foreach ($totals['lines'] as $line) {
+            $insertedItem = $wpdb->insert(
+                $wpdb->prefix . 'vy_invoice_items',
+                [
+                    'org_id' => $org,
+                    'invoice_id' => $invoiceId,
+                    'description' => $line['description'],
+                    'quantity' => $line['quantity'],
+                    'unit_price' => $line['unit_price'],
+                    'tax_rate' => $line['tax_rate'],
+                    'tax_amount' => $line['tax_amount'],
+                    'tax_type' => $line['tax_type'],
+                    'line_total' => $line['line_total'],
+                    'created_at' => $timestamp,
+                ],
+                ['%d','%d','%s','%f','%f','%f','%f','%s','%f','%s']
+            );
+
+            if ($insertedItem === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('vy_invoice_items_insert_failed', 'Failed to save invoice items.', ['status' => 500]);
+            }
+        }
+
+        $wpdb->query('COMMIT');
+
+        $responsePayload = ['id' => $invoiceId];
+        $auditLines = [
+            'Customer: ' . ($contactData['name'] ?: 'Walk-in customer'),
+            'Status: ' . (in_array($status, ['DRAFT', 'SENT', 'PARTIAL', 'PAID', 'VOID'], true) ? $status : 'SENT'),
+            'Items: ' . count($totals['lines']),
+            'Total: ' . RecordAuditLogger::money((float) $totals['total'], $currency),
+        ];
+        foreach ((array) ($options['audit_lines'] ?? []) as $extraLine) {
+            $extraLine = trim((string) $extraLine);
+            if ($extraLine !== '') {
+                $auditLines[] = $extraLine;
+            }
+        }
+
+        RecordAuditLogger::log(
+            $org,
+            'invoice',
+            $invoiceId,
+            'created',
+            sprintf('Created invoice %s', $invoiceNumber),
+            ['lines' => $auditLines],
+            !empty($options['related_record_type']) ? (string) $options['related_record_type'] : null,
+            !empty($options['related_record_id']) ? (int) $options['related_record_id'] : null
+        );
+
+        if (empty($options['suppress_auto_email'])) {
+            $settings = vy_fetch_invoice_template_settings($org);
+            if (!empty($settings['auto_email_on_create'])) {
+                $emailResult = vy_send_invoice_email($invoiceId);
+                if (is_wp_error($emailResult)) {
+                    SystemLogger::log_event(
+                        'invoice_auto_email_failed',
+                        'Auto email failed after invoice creation.',
+                        [
+                            'org_id' => $org,
+                            'invoice_id' => $invoiceId,
+                            'error_message' => $emailResult->get_error_message(),
+                        ],
+                        get_current_user_id(),
+                        'backend/Api/VyRestInvoices.php'
+                    );
+                    $responsePayload['email_error'] = $emailResult->get_error_message();
+                } else {
+                    $responsePayload['email_sent_to'] = $emailResult['recipients'];
+                    $responsePayload['email_sent_at'] = $emailResult['sent_at'];
+                    self::log_invoice_email_audit($org, $invoiceId, $invoiceNumber, $emailResult);
+                }
+            }
+        }
+
+        if (empty($options['suppress_internal_notification'])) {
+            try {
+                InternalDocumentNotifier::notify_invoice_created($org, $invoiceId);
+            } catch (\Throwable $throwable) {
+                SystemLogger::log_event(
+                    'invoice_internal_notification_failed',
+                    'Internal invoice creation notification failed.',
+                    [
+                        'org_id' => $org,
+                        'invoice_id' => $invoiceId,
+                        'error_message' => $throwable->getMessage(),
+                    ],
+                    get_current_user_id(),
+                    'backend/Api/VyRestInvoices.php'
+                );
+            }
+        }
+
+        $responsePayload['invoice_number'] = $invoiceNumber;
+        $responsePayload['created_at'] = $timestamp;
+
+        return $responsePayload;
+    }
+
+    private static function fetch_recurring_profile(int $org_id, int $profile_id): ?array
+    {
+        global $wpdb;
+
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT *
+             FROM {$wpdb->prefix}vy_invoice_recurring_profiles
+             WHERE org_id = %d AND id = %d
+             LIMIT 1",
+            $org_id,
+            $profile_id
+        ), ARRAY_A);
+
+        return $row ?: null;
+    }
+
+    private static function find_recurring_profile_by_source(int $org_id, int $source_invoice_id): ?array
+    {
+        if ($source_invoice_id <= 0) {
+            return null;
+        }
+
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT *
+             FROM {$wpdb->prefix}vy_invoice_recurring_profiles
+             WHERE org_id = %d AND source_invoice_id = %d
+             ORDER BY id DESC
+             LIMIT 1",
+            $org_id,
+            $source_invoice_id
+        ), ARRAY_A);
+
+        return $row ?: null;
+    }
+
+    private static function fetch_recurring_profile_items(int $org_id, int $profile_id): array
+    {
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT description, quantity, unit_price, tax_rate, tax_amount, tax_type, line_total
+             FROM {$wpdb->prefix}vy_invoice_recurring_items
+             WHERE org_id = %d AND profile_id = %d
+             ORDER BY id ASC",
+            $org_id,
+            $profile_id
+        ), ARRAY_A);
+
+        return is_array($rows) ? $rows : [];
+    }
+
+    private static function sanitize_recurring_profile_payload(int $org_id, array $sourceInvoice, array $body): array
+    {
+        $startDate = self::normalize_date_input($body['start_date'] ?? ($sourceInvoice['date'] ?? null), gmdate('Y-m-d'));
+        $endDate = !empty($body['end_date']) ? self::normalize_date_input($body['end_date'], null) : null;
+        $frequency = self::normalize_recurring_frequency($body['frequency'] ?? 'MONTHLY');
+        $interval = min(12, max(1, (int) ($body['interval_count'] ?? 1)));
+        $dueDays = max(0, (int) ($body['due_days'] ?? self::calculate_invoice_due_days($org_id, $sourceInvoice)));
+        $profileName = sanitize_text_field((string) ($body['profile_name'] ?? ('Recurring ' . ($sourceInvoice['invoice_number'] ?? 'Invoice'))));
+        if ($profileName === '') {
+            $profileName = 'Recurring Invoice';
+        }
+        $invoiceStatus = strtoupper((string) ($body['invoice_status'] ?? ($sourceInvoice['status'] ?? 'DRAFT')));
+        if (!in_array($invoiceStatus, ['DRAFT', 'SENT'], true)) {
+            $invoiceStatus = 'DRAFT';
+        }
+
+        $status = strtoupper((string) ($body['status'] ?? 'ACTIVE'));
+        if (!in_array($status, ['ACTIVE', 'PAUSED', 'ENDED'], true)) {
+            $status = 'ACTIVE';
+        }
+
+        $nextRunDate = $status === 'ENDED' ? null : $startDate;
+        if ($endDate && $nextRunDate && $nextRunDate > $endDate) {
+            $nextRunDate = null;
+            $status = 'ENDED';
+        }
+
+        return [
+            'profile_name' => $profileName,
+            'start_date' => $startDate,
+            'end_date' => $endDate,
+            'frequency' => $frequency,
+            'interval_count' => $interval,
+            'due_days' => $dueDays,
+            'currency' => strtoupper((string) ($sourceInvoice['currency'] ?? 'INR')) ?: 'INR',
+            'invoice_status' => $invoiceStatus,
+            'notes' => wp_kses_post((string) ($body['notes'] ?? ($sourceInvoice['notes'] ?? ''))),
+            'status' => $status,
+            'next_run_date' => $nextRunDate,
+        ];
+    }
+
+    private static function sanitize_recurring_profile_update_payload(array $profile, array $body): array
+    {
+        $payload = [];
+
+        if (array_key_exists('profile_name', $body)) {
+            $profileName = sanitize_text_field((string) $body['profile_name']);
+            if ($profileName !== '') {
+                $payload['profile_name'] = $profileName;
+            }
+        }
+
+        $frequency = strtoupper((string) ($profile['frequency'] ?? 'MONTHLY'));
+        if (array_key_exists('frequency', $body)) {
+            $frequency = self::normalize_recurring_frequency($body['frequency']);
+            $payload['frequency'] = $frequency;
+        }
+
+        $interval = (int) ($profile['interval_count'] ?? 1);
+        if (array_key_exists('interval_count', $body)) {
+            $interval = min(12, max(1, (int) $body['interval_count']));
+            $payload['interval_count'] = $interval;
+        }
+
+        $endDate = array_key_exists('end_date', $body)
+            ? (!empty($body['end_date']) ? self::normalize_date_input($body['end_date'], null) : null)
+            : (!empty($profile['end_date']) ? (string) $profile['end_date'] : null);
+        if (array_key_exists('end_date', $body)) {
+            $payload['end_date'] = $endDate;
+        }
+
+        if (array_key_exists('due_days', $body)) {
+            $payload['due_days'] = max(0, (int) $body['due_days']);
+        }
+
+        if (array_key_exists('invoice_status', $body)) {
+            $invoiceStatus = strtoupper((string) $body['invoice_status']);
+            if (in_array($invoiceStatus, ['DRAFT', 'SENT'], true)) {
+                $payload['invoice_status'] = $invoiceStatus;
+            }
+        }
+
+        if (array_key_exists('notes', $body)) {
+            $payload['notes'] = wp_kses_post((string) $body['notes']);
+        }
+
+        if (array_key_exists('start_date', $body)) {
+            $payload['start_date'] = self::normalize_date_input($body['start_date'], (string) ($profile['start_date'] ?? gmdate('Y-m-d')));
+        }
+
+        $status = strtoupper((string) ($profile['status'] ?? 'ACTIVE'));
+        if (array_key_exists('status', $body)) {
+            $status = strtoupper((string) $body['status']);
+            if (in_array($status, ['ACTIVE', 'PAUSED', 'ENDED'], true)) {
+                $payload['status'] = $status;
+            }
+        }
+
+        $lastRunDate = !empty($profile['last_run_date']) ? (string) $profile['last_run_date'] : null;
+        if (array_key_exists('start_date', $body) || array_key_exists('frequency', $body) || array_key_exists('interval_count', $body) || array_key_exists('end_date', $body) || array_key_exists('status', $body)) {
+            if ($status === 'ENDED') {
+                $payload['next_run_date'] = null;
+            } elseif ($lastRunDate) {
+                $payload['next_run_date'] = self::calculate_next_recurring_date($lastRunDate, $frequency, $interval, $endDate);
+            } else {
+                $payload['next_run_date'] = $payload['start_date'] ?? (string) ($profile['start_date'] ?? gmdate('Y-m-d'));
+                if ($endDate && $payload['next_run_date'] > $endDate) {
+                    $payload['next_run_date'] = null;
+                    $payload['status'] = 'ENDED';
+                }
+            }
+        }
+
+        return $payload;
+    }
+
+    private static function format_recurring_profile_row(int $org_id, array $profile, bool $includeItems): array
+    {
+        $lastInvoice = !empty($profile['last_invoice_id'])
+            ? self::fetch_invoice($org_id, (int) $profile['last_invoice_id'])
+            : null;
+        $sourceInvoice = !empty($profile['source_invoice_id'])
+            ? self::fetch_invoice($org_id, (int) $profile['source_invoice_id'])
+            : null;
+
+        $row = [
+            'id' => (int) ($profile['id'] ?? 0),
+            'profile_name' => (string) ($profile['profile_name'] ?? ''),
+            'source_invoice_id' => !empty($profile['source_invoice_id']) ? (int) $profile['source_invoice_id'] : null,
+            'contact_id' => !empty($profile['contact_id']) ? (int) $profile['contact_id'] : null,
+            'customer_name' => (string) ($profile['customer_name'] ?? ''),
+            'customer_email' => (string) ($profile['customer_email'] ?? ''),
+            'customer_phone' => (string) ($profile['customer_phone'] ?? ''),
+            'start_date' => (string) ($profile['start_date'] ?? ''),
+            'end_date' => !empty($profile['end_date']) ? (string) $profile['end_date'] : null,
+            'frequency' => (string) ($profile['frequency'] ?? 'MONTHLY'),
+            'interval_count' => (int) ($profile['interval_count'] ?? 1),
+            'due_days' => (int) ($profile['due_days'] ?? 0),
+            'currency' => (string) ($profile['currency'] ?? 'INR'),
+            'invoice_status' => (string) ($profile['invoice_status'] ?? 'DRAFT'),
+            'notes' => (string) ($profile['notes'] ?? ''),
+            'status' => (string) ($profile['status'] ?? 'ACTIVE'),
+            'next_run_date' => !empty($profile['next_run_date']) ? (string) $profile['next_run_date'] : null,
+            'last_run_date' => !empty($profile['last_run_date']) ? (string) $profile['last_run_date'] : null,
+            'generated_count' => (int) ($profile['generated_count'] ?? 0),
+            'can_generate_now' => !empty($profile['next_run_date']) && (string) $profile['next_run_date'] <= gmdate('Y-m-d') && strtoupper((string) ($profile['status'] ?? 'ACTIVE')) === 'ACTIVE',
+            'last_invoice' => $lastInvoice ? [
+                'id' => (int) ($lastInvoice['id'] ?? 0),
+                'invoice_number' => (string) ($lastInvoice['invoice_number'] ?? ''),
+                'status' => (string) ($lastInvoice['status'] ?? ''),
+                'date' => (string) ($lastInvoice['date'] ?? ''),
+            ] : null,
+            'source_invoice' => $sourceInvoice ? [
+                'id' => (int) ($sourceInvoice['id'] ?? 0),
+                'invoice_number' => (string) ($sourceInvoice['invoice_number'] ?? ''),
+            ] : null,
+        ];
+
+        if ($includeItems) {
+            $row['items'] = self::fetch_recurring_profile_items($org_id, (int) ($profile['id'] ?? 0));
+        }
+
+        return $row;
+    }
+
+    private static function run_due_recurring_profiles(?int $org_id = null, ?int $profile_id = null, ?string $asOfDate = null)
+    {
+        global $wpdb;
+
+        $asOfDate = self::normalize_date_input($asOfDate, gmdate('Y-m-d'));
+        $where = ["status = 'ACTIVE'", 'next_run_date IS NOT NULL', 'next_run_date <= %s'];
+        $params = [$asOfDate];
+
+        if ($org_id !== null && $org_id > 0) {
+            $where[] = 'org_id = %d';
+            $params[] = $org_id;
+        }
+
+        if ($profile_id !== null && $profile_id > 0) {
+            $where[] = 'id = %d';
+            $params[] = $profile_id;
+        }
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT *
+             FROM {$wpdb->prefix}vy_invoice_recurring_profiles
+             WHERE " . implode(' AND ', $where) . "
+             ORDER BY next_run_date ASC, id ASC
+             LIMIT 25",
+            ...$params
+        ), ARRAY_A);
+
+        if ($profile_id !== null && !$rows) {
+            return new WP_Error('vy_recurring_not_due', 'This recurring plan is not due for generation yet.', ['status' => 400]);
+        }
+
+        $generated = [];
+        foreach ($rows ?: [] as $profile) {
+            $result = self::process_recurring_profile_generations((int) ($profile['org_id'] ?? 0), $profile, $asOfDate);
+            if (is_wp_error($result)) {
+                if ($profile_id !== null) {
+                    return $result;
+                }
+
+                SystemLogger::log_event(
+                    'recurring_generation_failed',
+                    'Recurring invoice generation failed.',
+                    [
+                        'org_id' => (int) ($profile['org_id'] ?? 0),
+                        'profile_id' => (int) ($profile['id'] ?? 0),
+                        'error_message' => $result->get_error_message(),
+                    ],
+                    get_current_user_id(),
+                    'backend/Api/VyRestInvoices.php'
+                );
+                continue;
+            }
+
+            $generated = array_merge($generated, $result);
+        }
+
+        return $generated;
+    }
+
+    private static function process_recurring_profile_generations(int $org_id, array $profile, string $asOfDate)
+    {
+        if ($org_id <= 0 || empty($profile['id'])) {
+            return new WP_Error('vy_recurring_invalid_profile', 'Recurring profile could not be resolved.', ['status' => 400]);
+        }
+
+        $items = self::fetch_recurring_profile_items($org_id, (int) $profile['id']);
+        if (!$items) {
+            return new WP_Error('vy_no_items', 'Recurring billing profile has no invoice items.', ['status' => 400]);
+        }
+
+        $generated = [];
+        $currentProfile = $profile;
+        $runs = 0;
+
+        while (!empty($currentProfile['next_run_date']) && (string) $currentProfile['next_run_date'] <= $asOfDate && $runs < 12) {
+            $invoiceDate = (string) $currentProfile['next_run_date'];
+            $body = [
+                'contact_id' => !empty($currentProfile['contact_id']) ? (int) $currentProfile['contact_id'] : null,
+                'customer_name' => (string) ($currentProfile['customer_name'] ?? ''),
+                'customer_email' => (string) ($currentProfile['customer_email'] ?? ''),
+                'customer_phone' => (string) ($currentProfile['customer_phone'] ?? ''),
+                'date' => $invoiceDate,
+                'due_date' => self::resolve_due_date_from_days($invoiceDate, (int) ($currentProfile['due_days'] ?? 0)),
+                'currency' => (string) ($currentProfile['currency'] ?? 'INR'),
+                'status' => (string) ($currentProfile['invoice_status'] ?? 'DRAFT'),
+                'notes' => (string) ($currentProfile['notes'] ?? ''),
+                'items' => array_map(static function (array $item): array {
+                    return [
+                        'description' => (string) ($item['description'] ?? ''),
+                        'quantity' => (float) ($item['quantity'] ?? 0),
+                        'unit_price' => (float) ($item['unit_price'] ?? 0),
+                        'tax_rate' => (float) ($item['tax_rate'] ?? 0),
+                    ];
+                }, $items),
+            ];
+
+            $created = self::create_invoice_record($org_id, $body, [
+                'recurring_profile_id' => (int) $currentProfile['id'],
+                'suppress_auto_email' => true,
+                'audit_lines' => [
+                    'Generated from recurring plan: ' . (string) ($currentProfile['profile_name'] ?? ('#' . $currentProfile['id'])),
+                    'Scheduled run date: ' . $invoiceDate,
+                ],
+                'related_record_type' => 'recurring_profile',
+                'related_record_id' => (int) $currentProfile['id'],
+            ]);
+            if (is_wp_error($created)) {
+                return $created;
+            }
+
+            $generated[] = [
+                'profile_id' => (int) $currentProfile['id'],
+                'invoice_id' => (int) ($created['id'] ?? 0),
+                'invoice_number' => (string) ($created['invoice_number'] ?? ''),
+                'date' => $invoiceDate,
+            ];
+
+            $nextRunDate = self::calculate_next_recurring_date(
+                $invoiceDate,
+                (string) ($currentProfile['frequency'] ?? 'MONTHLY'),
+                (int) ($currentProfile['interval_count'] ?? 1),
+                !empty($currentProfile['end_date']) ? (string) $currentProfile['end_date'] : null
+            );
+            $nextStatus = $nextRunDate ? 'ACTIVE' : 'ENDED';
+
+            global $wpdb;
+            $wpdb->update(
+                $wpdb->prefix . 'vy_invoice_recurring_profiles',
+                [
+                    'last_run_date' => $invoiceDate,
+                    'last_invoice_id' => (int) ($created['id'] ?? 0),
+                    'generated_count' => (int) ($currentProfile['generated_count'] ?? 0) + 1,
+                    'next_run_date' => $nextRunDate,
+                    'status' => $nextStatus,
+                    'updated_at' => current_time('mysql', true),
+                ],
+                ['org_id' => $org_id, 'id' => (int) $currentProfile['id']],
+                ['%s', '%d', '%d', '%s', '%s', '%s'],
+                ['%d', '%d']
+            );
+
+            RecordAuditLogger::log(
+                $org_id,
+                'invoice',
+                (int) ($created['id'] ?? 0),
+                'recurring_generated',
+                sprintf('Generated invoice %s from recurring plan', (string) ($created['invoice_number'] ?? '')),
+                [
+                    'lines' => [
+                        'Recurring plan: ' . (string) ($currentProfile['profile_name'] ?? ('#' . $currentProfile['id'])),
+                        'Run date: ' . $invoiceDate,
+                    ],
+                ],
+                'recurring_profile',
+                (int) $currentProfile['id']
+            );
+
+            $currentProfile['last_run_date'] = $invoiceDate;
+            $currentProfile['last_invoice_id'] = (int) ($created['id'] ?? 0);
+            $currentProfile['generated_count'] = (int) ($currentProfile['generated_count'] ?? 0) + 1;
+            $currentProfile['next_run_date'] = $nextRunDate;
+            $currentProfile['status'] = $nextStatus;
+            $runs++;
+        }
+
+        return $generated;
+    }
+
+    private static function calculate_invoice_due_days(int $org_id, array $invoice): int
+    {
+        $date = !empty($invoice['date']) ? (string) $invoice['date'] : gmdate('Y-m-d');
+        $dueDate = !empty($invoice['due_date']) ? (string) $invoice['due_date'] : self::resolve_due_date($org_id, $date, null);
+
+        try {
+            $start = new \DateTimeImmutable($date);
+            $end = new \DateTimeImmutable($dueDate);
+            $days = (int) $start->diff($end)->format('%r%a');
+            return max(0, $days);
+        } catch (\Throwable $throwable) {
+            return 0;
+        }
+    }
+
+    private static function normalize_recurring_frequency($value): string
+    {
+        $frequency = strtoupper(sanitize_text_field((string) $value));
+        if (!in_array($frequency, ['WEEKLY', 'MONTHLY', 'QUARTERLY', 'YEARLY'], true)) {
+            $frequency = 'MONTHLY';
+        }
+
+        return $frequency;
+    }
+
+    private static function calculate_next_recurring_date(string $anchorDate, string $frequency, int $interval, ?string $endDate): ?string
+    {
+        try {
+            $date = new \DateTimeImmutable($anchorDate, new \DateTimeZone('UTC'));
+        } catch (\Throwable $throwable) {
+            return null;
+        }
+
+        $interval = max(1, $interval);
+        $modifier = match (self::normalize_recurring_frequency($frequency)) {
+            'WEEKLY' => sprintf('+%d week', $interval),
+            'QUARTERLY' => sprintf('+%d month', $interval * 3),
+            'YEARLY' => sprintf('+%d year', $interval),
+            default => sprintf('+%d month', $interval),
+        };
+
+        $next = $date->modify($modifier);
+        if (!$next) {
+            return null;
+        }
+
+        $nextDate = $next->format('Y-m-d');
+        if ($endDate && $nextDate > $endDate) {
+            return null;
+        }
+
+        return $nextDate;
+    }
+
+    private static function resolve_due_date_from_days(string $invoiceDate, int $dueDays): string
+    {
+        if ($dueDays <= 0) {
+            return $invoiceDate;
+        }
+
+        try {
+            $date = new \DateTimeImmutable($invoiceDate, new \DateTimeZone('UTC'));
+            return $date->modify(sprintf('+%d days', $dueDays))->format('Y-m-d');
+        } catch (\Throwable $throwable) {
+            return $invoiceDate;
+        }
+    }
+
+    private static function normalize_date_input($value, ?string $fallback): ?string
+    {
+        $candidate = is_string($value) ? trim($value) : '';
+        if ($candidate !== '' && strtotime($candidate)) {
+            return gmdate('Y-m-d', strtotime($candidate));
+        }
+
+        if ($fallback !== null && strtotime($fallback)) {
+            return gmdate('Y-m-d', strtotime($fallback));
+        }
+
+        return $fallback;
+    }
+
+    private static function build_recurring_update_audit_lines(array $before, array $after): array
+    {
+        $lines = [];
+        self::append_change_line($lines, 'Plan', (string) ($before['profile_name'] ?? ''), (string) ($after['profile_name'] ?? ''));
+        self::append_change_line($lines, 'Frequency', (string) (($before['interval_count'] ?? 1) . ' x ' . ($before['frequency'] ?? '')), (string) (($after['interval_count'] ?? 1) . ' x ' . ($after['frequency'] ?? '')));
+        self::append_change_line($lines, 'Next run', (string) ($before['next_run_date'] ?? ''), (string) ($after['next_run_date'] ?? ''));
+        self::append_change_line($lines, 'Status', (string) ($before['status'] ?? ''), (string) ($after['status'] ?? ''));
+        return $lines ?: ['Recurring plan settings saved.'];
+    }
+
+    private static function fetch_invoice_notes(int $org_id, int $invoice_id): array
+    {
+        if ($invoice_id <= 0) {
+            return [];
+        }
+
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, invoice_id, note_number, note_type, note_date, amount, reason, status, created_at
+             FROM {$wpdb->prefix}vy_invoice_notes
+             WHERE org_id = %d AND invoice_id = %d
+             ORDER BY note_date DESC, id DESC",
+            $org_id,
+            $invoice_id
+        ), ARRAY_A);
+
+        return array_map([__CLASS__, 'format_note_row'], $rows ?: []);
+    }
+
+    private static function format_note_row(array $row): array
+    {
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'invoice_id' => (int) ($row['invoice_id'] ?? 0),
+            'note_number' => (string) ($row['note_number'] ?? ''),
+            'note_type' => (string) ($row['note_type'] ?? ''),
+            'note_date' => (string) ($row['note_date'] ?? ''),
+            'amount' => round((float) ($row['amount'] ?? 0), 2),
+            'reason' => (string) ($row['reason'] ?? ''),
+            'status' => (string) ($row['status'] ?? 'POSTED'),
+            'created_at' => (string) ($row['created_at'] ?? ''),
+        ];
+    }
+
+    private static function generate_invoice_note_number(int $org_id, string $note_type, ?string $note_date = null): string
+    {
+        global $wpdb;
+
+        $prefix = $note_type === 'DEBIT' ? 'DBN/' : 'CRN/';
+        $year = gmdate('Y', strtotime($note_date ?: gmdate('Y-m-d')));
+        $fullPrefix = $prefix . $year . '/';
+        $likePattern = $wpdb->esc_like($fullPrefix) . '%';
+
+        $last = $wpdb->get_var($wpdb->prepare(
+            "SELECT note_number
+             FROM {$wpdb->prefix}vy_invoice_notes
+             WHERE org_id = %d AND note_number LIKE %s
+             ORDER BY id DESC
+             LIMIT 1",
+            $org_id,
+            $likePattern
+        ));
+
+        $next = 1;
+        if (is_string($last) && preg_match('/(\d+)$/', $last, $matches)) {
+            $next = (int) $matches[1] + 1;
+        }
+
+        return $fullPrefix . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+    }
+
+    private static function apply_invoice_financials(int $org_id, array $invoice): array
+    {
+        $paidAmount = self::get_paid_amount((int) ($invoice['id'] ?? 0));
+        $noteTotals = vy_invoice_note_totals_for_invoice($org_id, (int) ($invoice['id'] ?? 0));
+
+        return vy_invoice_apply_adjustments($invoice, $paidAmount, $noteTotals);
+    }
+
+    private static function fetch_invoice_promises(int $org_id, array $filters = []): array
+    {
+        global $wpdb;
+
+        $table = $wpdb->prefix . 'vy_invoice_promises';
+        $where = ['org_id = %d'];
+        $params = [$org_id];
+
+        $invoiceId = (int) ($filters['invoice_id'] ?? 0);
+        if ($invoiceId > 0) {
+            $where[] = 'invoice_id = %d';
+            $params[] = $invoiceId;
+        }
+
+        $contactId = (int) ($filters['contact_id'] ?? 0);
+        if ($contactId > 0) {
+            $where[] = 'contact_id = %d';
+            $params[] = $contactId;
+        }
+
+        $status = strtoupper(sanitize_text_field((string) ($filters['status'] ?? '')));
+        if ($status !== '') {
+            $where[] = 'status = %s';
+            $params[] = $status;
+        }
+
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT *
+             FROM {$table}
+             WHERE " . implode(' AND ', $where) . "
+             ORDER BY promised_date ASC, id DESC",
+            ...$params
+        ), ARRAY_A);
+
+        $data = array_map(function (array $row) use ($org_id): array {
+            return self::format_promise_row($org_id, $row);
+        }, $rows ?: []);
+
+        $view = strtolower(sanitize_text_field((string) ($filters['view'] ?? '')));
+        if ($view === 'overdue') {
+            $today = gmdate('Y-m-d');
+            $data = array_values(array_filter($data, static function (array $row) use ($today): bool {
+                return strtoupper((string) ($row['status'] ?? 'OPEN')) === 'OPEN'
+                    && !empty($row['promised_date'])
+                    && (string) $row['promised_date'] < $today;
+            }));
+        }
+
+        return $data;
+    }
+
+    private static function fetch_open_invoice_promises(int $org_id, int $invoice_id): array
+    {
+        return array_values(array_filter(
+            self::fetch_invoice_promises($org_id, ['invoice_id' => $invoice_id]),
+            static function (array $promise): bool {
+                return strtoupper((string) ($promise['status'] ?? 'OPEN')) === 'OPEN';
+            }
+        ));
+    }
+
+    private static function fetch_promise(int $org_id, int $promise_id): ?array
+    {
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT *
+             FROM {$wpdb->prefix}vy_invoice_promises
+             WHERE org_id = %d AND id = %d
+             LIMIT 1",
+            $org_id,
+            $promise_id
+        ), ARRAY_A);
+
+        return $row ?: null;
+    }
+
+    private static function format_promise_row(int $org_id, array $row): array
+    {
+        $invoice = !empty($row['invoice_id']) ? self::fetch_invoice($org_id, (int) $row['invoice_id']) : null;
+        $financials = $invoice ? self::apply_invoice_financials($org_id, $invoice) : null;
+        $today = gmdate('Y-m-d');
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'invoice_id' => !empty($row['invoice_id']) ? (int) $row['invoice_id'] : null,
+            'contact_id' => !empty($row['contact_id']) ? (int) $row['contact_id'] : null,
+            'promised_date' => (string) ($row['promised_date'] ?? ''),
+            'promised_amount' => round((float) ($row['promised_amount'] ?? 0), 2),
+            'notes' => (string) ($row['notes'] ?? ''),
+            'status' => (string) ($row['status'] ?? 'OPEN'),
+            'resolution_note' => (string) ($row['resolution_note'] ?? ''),
+            'resolved_at' => !empty($row['resolved_at']) ? (string) $row['resolved_at'] : null,
+            'created_at' => (string) ($row['created_at'] ?? ''),
+            'is_overdue' => strtoupper((string) ($row['status'] ?? 'OPEN')) === 'OPEN'
+                && !empty($row['promised_date'])
+                && (string) $row['promised_date'] < $today,
+            'invoice' => $invoice ? [
+                'id' => (int) ($invoice['id'] ?? 0),
+                'invoice_number' => (string) ($invoice['invoice_number'] ?? ''),
+                'customer_name' => (string) ($invoice['customer_name'] ?? ''),
+                'status' => (string) ($invoice['status'] ?? ''),
+                'balance_due' => (float) ($financials['balance_due'] ?? 0),
+            ] : null,
+        ];
+    }
+
+    private static function build_promise_update_audit_lines(array $before, array $after): array
+    {
+        $lines = [];
+        self::append_change_line($lines, 'Promised date', (string) ($before['promised_date'] ?? ''), (string) ($after['promised_date'] ?? ''));
+        self::append_change_line($lines, 'Promised amount', (string) ($before['promised_amount'] ?? ''), (string) ($after['promised_amount'] ?? ''));
+        self::append_change_line($lines, 'Status', (string) ($before['status'] ?? ''), (string) ($after['status'] ?? ''));
+
+        $notesBefore = trim((string) ($before['notes'] ?? ''));
+        $notesAfter = trim((string) ($after['notes'] ?? ''));
+        if ($notesBefore !== $notesAfter) {
+            $lines[] = $notesAfter === '' ? 'Promise notes cleared.' : 'Promise notes updated.';
+        }
+
+        return $lines ?: ['Promise details saved.'];
     }
 
     private static function calculate_totals(array $items): array

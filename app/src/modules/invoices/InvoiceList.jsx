@@ -1,21 +1,23 @@
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+
 const formatCurrency = (value) =>
     Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export default function InvoiceList({ invoices = [], loading, error, onSelectInvoice }) {
     if (loading) {
-        return <p className="kb-muted">Loading invoices…</p>;
+        return <FeedbackState title="Loading invoices" description="Fetching the current invoice list." tone="loading" />;
     }
 
     if (error) {
-        return <p className="text-red-600">{error.message}</p>;
+        return <FeedbackState title="Unable to load invoices" description={error.message} tone="error" />;
     }
 
     if (!invoices.length) {
-        return <p>No invoices yet.</p>;
+        return <FeedbackState title="No invoices yet" description="Create the first invoice to start tracking sales and collections." tone="empty" />;
     }
 
     return (
-        <div className="overflow-auto">
+        <div className="ui-table-wrap">
             <table className="w-full text-sm">
                 <thead>
                     <tr className="text-left text-gray-500">
@@ -36,7 +38,14 @@ export default function InvoiceList({ invoices = [], loading, error, onSelectInv
                             <td>{invoice.customer_name}</td>
                             <td>{invoice.date}</td>
                             <td>{invoice.due_date || "—"}</td>
-                            <td>₹ {formatCurrency(invoice.total)}</td>
+                            <td>
+                                ₹ {formatCurrency(invoice.adjusted_total ?? invoice.total)}
+                                {Number(invoice.adjusted_total ?? invoice.total) !== Number(invoice.total ?? 0) ? (
+                                    <div className="kb-muted" style={{ fontSize: 12 }}>
+                                        Base ₹ {formatCurrency(invoice.total)}
+                                    </div>
+                                ) : null}
+                            </td>
                             <td>
                                 <span
                                     style={{

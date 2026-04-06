@@ -4,6 +4,7 @@ import { useExpenses } from "./hooks";
 import ExpensesList from "./ExpensesList.jsx";
 import ExpenseForm from "./ExpenseForm.jsx";
 import { useAccounts } from "../accounts/hooks";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 import { consumeQueryFlag } from "../../utils/locationFlags";
 
 const isMoneyAccount = (acct) => ["BANK", "CASH", "WALLET"].includes((acct?.sub_type || "").toUpperCase());
@@ -18,11 +19,13 @@ export default function ExpensesPage() {
             from: from.toISOString().slice(0, 10),
             to: to.toISOString().slice(0, 10),
             category: "",
+            document_type: "ALL",
             status: "ACTIVE",
         };
     });
     const [refreshKey, setRefreshKey] = useState(0);
     const [showForm, setShowForm] = useState(false);
+    const [createMode, setCreateMode] = useState("EXPENSE");
     const [actionError, setActionError] = useState("");
 
     const { data, loading, error } = useExpenses(filters, refreshKey);
@@ -41,6 +44,7 @@ export default function ExpensesPage() {
 
     useEffect(() => {
         if (consumeQueryFlag("create")) {
+            setCreateMode("EXPENSE");
             setShowForm(true);
         }
     }, []);
@@ -71,11 +75,16 @@ export default function ExpensesPage() {
                 <div>
                     <p className="expenses-eyebrow">Operational spend</p>
                     <h1>Expenses</h1>
-                    <p className="expenses-subtitle">Track spend, payouts, and categories.</p>
+                    <p className="expenses-subtitle">Track direct expenses, vendor bills, due dates, and settlement state.</p>
                 </div>
-                <button className="expenses-primary-btn" onClick={() => setShowForm(true)}>
-                    Add Expense
-                </button>
+                <div className="flex gap-2">
+                    <button className="kb-btn kb-btn--secondary" onClick={() => { setCreateMode("BILL"); setShowForm(true); }}>
+                        New Bill
+                    </button>
+                    <button className="expenses-primary-btn" onClick={() => { setCreateMode("EXPENSE"); setShowForm(true); }}>
+                        Add Expense
+                    </button>
+                </div>
             </header>
 
             <section className="expenses-card">
@@ -103,6 +112,14 @@ export default function ExpensesPage() {
                         />
                     </div>
                     <div className="field">
+                        <label>Type</label>
+                        <select value={filters.document_type} onChange={handleFilterChange("document_type")}>
+                            <option value="ALL">All</option>
+                            <option value="EXPENSE">Expenses</option>
+                            <option value="BILL">Vendor Bills</option>
+                        </select>
+                    </div>
+                    <div className="field">
                         <label>Status</label>
                         <select value={filters.status} onChange={handleFilterChange("status")}>
                             <option value="ACTIVE">Active</option>
@@ -124,13 +141,15 @@ export default function ExpensesPage() {
             </section>
 
             {showForm && (
-                <Modal title="New Expense" onClose={() => setShowForm(false)}>
-                    {actionError ? <p className="text-red-600 text-sm">{actionError}</p> : null}
+                <Modal title={createMode === "BILL" ? "New Vendor Bill" : "New Expense"} onClose={() => setShowForm(false)}>
+                    <InlineNotice message={actionError} />
                     <ExpenseForm
+                        defaultDocumentType={createMode}
                         onSubmit={handleCreateExpense}
                         onCancel={() => setShowForm(false)}
                         moneyAccounts={moneyAccounts}
                         expenseAccounts={expenseAccounts}
+                        submitLabel={createMode === "BILL" ? "Save Bill" : "Save Expense"}
                     />
                 </Modal>
             )}

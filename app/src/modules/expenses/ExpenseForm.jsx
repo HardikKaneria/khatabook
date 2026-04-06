@@ -4,16 +4,25 @@ import ContactSuggestInput from "../contacts/ContactSuggestInput.jsx";
 const toOptions = (accounts = []) =>
     accounts.map((acct) => ({ id: acct.id, name: acct.name }));
 
-const buildInitialForm = (initialData, today, moneyAccounts, expenseAccounts) => ({
-    expense_date: initialData?.expense_date || today,
-    category: initialData?.category || "",
-    payee: initialData?.payee || "",
-    description: initialData?.description || "",
-    amount: initialData?.amount ?? "",
-    currency: initialData?.currency || "INR",
-    pay_from_account_id: moneyAccounts[0]?.id || "",
-    expense_account_id: expenseAccounts[0]?.id || "",
-});
+const buildInitialForm = (initialData, today, moneyAccounts, expenseAccounts, defaultDocumentType) => {
+    const documentType = initialData?.document_type || defaultDocumentType || "EXPENSE";
+
+    return {
+        document_type: documentType,
+        expense_date: initialData?.expense_date || today,
+        due_date: initialData?.due_date || (documentType === "BILL" ? (initialData?.expense_date || today) : ""),
+        category: initialData?.category || "",
+        reference_number: initialData?.reference_number || "",
+        payee: initialData?.payee || "",
+        description: initialData?.description || "",
+        amount: initialData?.amount ?? "",
+        currency: initialData?.currency || "INR",
+        pay_from_account_id: initialData?.payment_journal_id
+            ? ""
+            : (documentType === "BILL" ? "" : (moneyAccounts[0]?.id || "")),
+        expense_account_id: initialData?.expense_account_id || expenseAccounts[0]?.id || "",
+    };
+};
 
 export default function ExpenseForm({
     onSubmit,
@@ -21,24 +30,41 @@ export default function ExpenseForm({
     moneyAccounts = [],
     expenseAccounts = [],
     initialData = null,
+    defaultDocumentType = "EXPENSE",
     submitLabel,
     showPaymentFields = true,
+    showExpenseAccountField = true,
     disabled = false,
 }) {
     const today = new Date().toISOString().slice(0, 10);
-    const [form, setForm] = useState(() => buildInitialForm(initialData, today, moneyAccounts, expenseAccounts));
+    const [form, setForm] = useState(() => buildInitialForm(initialData, today, moneyAccounts, expenseAccounts, defaultDocumentType));
     const [selectedContactId, setSelectedContactId] = useState(initialData?.contact_id || null);
 
     const moneyOptions = useMemo(() => toOptions(moneyAccounts), [moneyAccounts]);
     const expenseOptions = useMemo(() => toOptions(expenseAccounts), [expenseAccounts]);
 
     useEffect(() => {
-        setForm(buildInitialForm(initialData, today, moneyAccounts, expenseAccounts));
+        setForm(buildInitialForm(initialData, today, moneyAccounts, expenseAccounts, defaultDocumentType));
         setSelectedContactId(initialData?.contact_id || null);
-    }, [expenseAccounts, initialData, moneyAccounts, today]);
+    }, [defaultDocumentType, expenseAccounts, initialData, moneyAccounts, today]);
 
     const handleChange = (key) => (event) => {
-        setForm((prev) => ({ ...prev, [key]: event.target.value }));
+        const value = event.target.value;
+        setForm((prev) => {
+            if (key === "document_type") {
+                return {
+                    ...prev,
+                    document_type: value,
+                    due_date: value === "BILL" ? (prev.due_date || prev.expense_date || today) : "",
+                };
+            }
+
+            if (key === "expense_date" && prev.document_type === "BILL" && !prev.due_date) {
+                return { ...prev, expense_date: value, due_date: value };
+            }
+
+            return { ...prev, [key]: value };
+        });
     };
     const handlePayeeChange = (value) => {
         setSelectedContactId(null);
@@ -57,8 +83,11 @@ export default function ExpenseForm({
     const handleSubmit = (event) => {
         event.preventDefault();
         onSubmit?.({
+            document_type: form.document_type,
             expense_date: form.expense_date,
+            due_date: form.document_type === "BILL" ? form.due_date || undefined : undefined,
             category: form.category,
+            reference_number: form.reference_number || undefined,
             payee: form.payee,
             description: form.description,
             amount: parseFloat(form.amount) || 0,
@@ -73,13 +102,32 @@ export default function ExpenseForm({
         <form className="space-y-3" onSubmit={handleSubmit}>
             <div className="grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
                 <div>
+                    <label className="kb-muted">Record Type</label>
+                    <select className="kb-input" value={form.document_type} onChange={handleChange("document_type")} disabled={disabled}>
+                        <option value="EXPENSE">Expense</option>
+                        <option value="BILL">Vendor Bill</option>
+                    </select>
+                </div>
+                <div>
                     <label className="kb-muted">Date</label>
                     <input type="date" className="kb-input" value={form.expense_date} onChange={handleChange("expense_date")} disabled={disabled} />
                 </div>
+                {form.document_type === "BILL" ? (
+                    <div>
+                        <label className="kb-muted">Due Date</label>
+                        <input type="date" className="kb-input" value={form.due_date} onChange={handleChange("due_date")} required={form.document_type === "BILL"} disabled={disabled} />
+                    </div>
+                ) : null}
                 <div>
                     <label className="kb-muted">Category</label>
                     <input className="kb-input" value={form.category} onChange={handleChange("category")} required disabled={disabled} />
                 </div>
+                {form.document_type === "BILL" ? (
+                    <div>
+                        <label className="kb-muted">Bill Number / Reference</label>
+                        <input className="kb-input" value={form.reference_number} onChange={handleChange("reference_number")} placeholder="Optional vendor bill number" disabled={disabled} />
+                    </div>
+                ) : null}
                 <ContactSuggestInput
                     label="Payee"
                     type="VENDOR"
@@ -103,26 +151,28 @@ export default function ExpenseForm({
                     <label className="kb-muted">Currency</label>
                     <input className="kb-input" value={form.currency} onChange={handleChange("currency")} disabled={disabled} />
                 </div>
-            </div>
-
-            {showPaymentFields ? (
-                <div className="grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
+                {showExpenseAccountField ? (
                     <div>
-                        <label className="kb-muted">Pay From (Bank/Cash)</label>
-                        <select className="kb-input" value={form.pay_from_account_id} onChange={handleChange("pay_from_account_id")} disabled={disabled}>
-                            <option value="">Unpaid / Record Later</option>
-                            {moneyOptions.map((acct) => (
+                        <label className="kb-muted">Expense Account</label>
+                        <select className="kb-input" value={form.expense_account_id} onChange={handleChange("expense_account_id")} disabled={disabled}>
+                            <option value="">General Expenses</option>
+                            {expenseOptions.map((acct) => (
                                 <option key={acct.id} value={acct.id}>
                                     {acct.name}
                                 </option>
                             ))}
                         </select>
                     </div>
+                ) : null}
+            </div>
+
+            {showPaymentFields ? (
+                <div className="grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 16 }}>
                     <div>
-                        <label className="kb-muted">Expense Account</label>
-                        <select className="kb-input" value={form.expense_account_id} onChange={handleChange("expense_account_id")} disabled={disabled}>
-                            <option value="">General Expenses</option>
-                            {expenseOptions.map((acct) => (
+                        <label className="kb-muted">Pay Now From (Bank/Cash)</label>
+                        <select className="kb-input" value={form.pay_from_account_id} onChange={handleChange("pay_from_account_id")} disabled={disabled}>
+                            <option value="">{form.document_type === "BILL" ? "Leave bill open for later settlement" : "Unpaid / Record Later"}</option>
+                            {moneyOptions.map((acct) => (
                                 <option key={acct.id} value={acct.id}>
                                     {acct.name}
                                 </option>

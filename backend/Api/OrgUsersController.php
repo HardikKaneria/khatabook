@@ -200,7 +200,7 @@ class OrgUsersController
         return $out;
     }
 
-    private static function ensure_membership(int $org_id, int $user_id, string $role): void {
+    private static function ensure_membership(int $org_id, int $user_id, string $role): bool|WP_Error {
         global $wpdb;
         $table = $wpdb->prefix . 'kbs_user_org_roles';
         $role  = self::normalize_role($role);
@@ -212,17 +212,50 @@ class OrgUsersController
         ));
 
         if ($exists) {
-            $wpdb->update($table, ['role' => $role], ['org_id' => $org_id, 'user_id' => $user_id], ['%s'], ['%d','%d']);
-        } else {
-            $wpdb->insert($table, ['org_id' => $org_id, 'user_id' => $user_id, 'role' => $role, 'is_primary' => 0], ['%d','%d','%s','%d']);
+            $updated = $wpdb->update($table, ['role' => $role], ['org_id' => $org_id, 'user_id' => $user_id], ['%s'], ['%d','%d']);
+            if ($updated === false) {
+                return new WP_Error('org_membership_update_failed', 'Failed to update the organization membership role.', ['status' => 500]);
+            }
+            return true;
         }
+
+        $inserted = $wpdb->insert($table, ['org_id' => $org_id, 'user_id' => $user_id, 'role' => $role, 'is_primary' => 0], ['%d','%d','%s','%d']);
+        if ($inserted === false) {
+            return new WP_Error('org_membership_insert_failed', 'Failed to create the organization membership.', ['status' => 500]);
+        }
+
+        return true;
     }
 
-    private static function set_wp_role(int $user_id, string $role): void {
+    private static function set_wp_role(int $user_id, string $role): bool|WP_Error {
         $role = self::normalize_role($role);
+        if (!class_exists('\WP_User')) {
+            return new WP_Error('wp_role_sync_unavailable', 'The WordPress user role API is unavailable.', ['status' => 500]);
+        }
         $user = new \WP_User($user_id);
         // Keep the WP role aligned for legacy capability checks outside org-scoped APIs.
         $user->set_role($role);
+        return true;
+    }
+
+    private static function clear_pending_invites(int $org_id, string $email): bool|WP_Error {
+        global $wpdb;
+
+        $deleted = $wpdb->delete(
+            $wpdb->prefix . 'kbs_org_invites',
+            [
+                'org_id' => $org_id,
+                'email' => $email,
+                'status' => 'invited',
+            ],
+            ['%d', '%s', '%s']
+        );
+
+        if ($deleted === false) {
+            return new WP_Error('invite_cleanup_failed', 'Failed to remove the stale invite rows.', ['status' => 500]);
+        }
+
+        return true;
     }
 
     private static function get_org_name(int $org_id): ?string {
@@ -352,8 +385,11 @@ class OrgUsersController
 
         foreach ($invites as $i) {
             $role = self::normalize_role($i->role ?? null);
-            self::ensure_membership((int)$i->org_id, $user_id, $role);
-            $wpdb->update($table, ['status' => 'accepted'], ['id' => (int)$i->id], ['%s'], ['%d']);
+            $membership = self::ensure_membership((int) $i->org_id, $user_id, $role);
+            if (is_wp_error($membership)) {
+                continue;
+            }
+            $wpdb->update($table, ['status' => 'accepted'], ['id' => (int) $i->id], ['%s'], ['%d']);
         }
     }
 
@@ -462,8 +498,14 @@ class OrgUsersController
         $wpdb->query('START TRANSACTION');
 
         try {
-            self::ensure_membership((int) $invite->org_id, (int) $user_id, $role);
-            self::set_wp_role((int) $user_id, $role);
+            $membership = self::ensure_membership((int) $invite->org_id, (int) $user_id, $role);
+            if (is_wp_error($membership)) {
+                throw new \RuntimeException($membership->get_error_message());
+            }
+            $roleSync = self::set_wp_role((int) $user_id, $role);
+            if (is_wp_error($roleSync)) {
+                throw new \RuntimeException($roleSync->get_error_message());
+            }
 
             $updated = $wpdb->update(
                 $table,
@@ -544,8 +586,27 @@ class OrgUsersController
         $user = get_user_by('email', $email);
         if ($user) {
             $user_id = (int) $user->ID;
-            self::ensure_membership($org_id, $user_id, $role);
-            self::set_wp_role($user_id, $role);
+            $wpdb->query('START TRANSACTION');
+
+            try {
+                $membership = self::ensure_membership($org_id, $user_id, $role);
+                if (is_wp_error($membership)) {
+                    throw new \RuntimeException($membership->get_error_message());
+                }
+                $roleSync = self::set_wp_role($user_id, $role);
+                if (is_wp_error($roleSync)) {
+                    throw new \RuntimeException($roleSync->get_error_message());
+                }
+                $inviteCleanup = self::clear_pending_invites($org_id, $email);
+                if (is_wp_error($inviteCleanup)) {
+                    throw new \RuntimeException($inviteCleanup->get_error_message());
+                }
+
+                $wpdb->query('COMMIT');
+            } catch (\Throwable $throwable) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('org_invite_existing_user_failed', 'Failed to grant organization access: ' . $throwable->getMessage(), ['status' => 500]);
+            }
 
             $body = sprintf(
                 "You've been granted access to %s as %s.\nSign in with your email to start collaborating.",
@@ -583,16 +644,21 @@ class OrgUsersController
             "SELECT id FROM {$table} WHERE org_id = %d AND email = %s LIMIT 1",
             $org_id, $email
         ));
+        $wpdb->query('START TRANSACTION');
         if ($existing_id) {
-            $wpdb->update($table,
+            $updated = $wpdb->update($table,
                 ['role' => $role, 'token' => $token, 'status' => 'invited', 'expires_at' => $expires_at],
                 ['id'   => $existing_id],
                 ['%s','%s','%s','%s'],
                 ['%d']
             );
+            if ($updated === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('invite_update_failed', 'Failed to refresh the invite.', ['status' => 500]);
+            }
             $invite_id = $existing_id;
         } else {
-            $wpdb->insert($table, [
+            $inserted = $wpdb->insert($table, [
                 'org_id'     => $org_id,
                 'email'      => $email,
                 'role'       => $role,
@@ -602,8 +668,13 @@ class OrgUsersController
                 'created_at' => current_time('mysql', true),
                 'expires_at' => $expires_at,
             ], ['%d','%s','%s','%s','%s','%d','%s','%s']);
+            if ($inserted === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('invite_insert_failed', 'Failed to create the invite.', ['status' => 500]);
+            }
             $invite_id = (int) $wpdb->insert_id;
         }
+        $wpdb->query('COMMIT');
 
         // Send invitation
         $subject = sprintf('[%s] You have been invited', get_bloginfo('name'));
@@ -668,8 +739,22 @@ class OrgUsersController
         }
 
         // Ensure membership exists and sync role
-        self::ensure_membership($org_id, $user_id, $role);
-        self::set_wp_role($user_id, $role);
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
+        try {
+            $membership = self::ensure_membership($org_id, $user_id, $role);
+            if (is_wp_error($membership)) {
+                throw new \RuntimeException($membership->get_error_message());
+            }
+            $roleSync = self::set_wp_role($user_id, $role);
+            if (is_wp_error($roleSync)) {
+                throw new \RuntimeException($roleSync->get_error_message());
+            }
+            $wpdb->query('COMMIT');
+        } catch (\Throwable $throwable) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('org_role_update_failed', 'Failed to update the organization role: ' . $throwable->getMessage(), ['status' => 500]);
+        }
 
         return new WP_REST_Response(['ok' => true], 200);
     }
@@ -784,7 +869,13 @@ class OrgUsersController
             if (!self::actor_can_manage_role($actorRole, $invite->role ?: 'c_employee')) {
                 return new WP_Error('forbidden', 'You cannot remove that invite.', ['status' => 403]);
             }
-            $wpdb->delete($table, ['id' => $invite_id, 'org_id' => $org_id], ['%d','%d']);
+            $wpdb->query('START TRANSACTION');
+            $deleted = $wpdb->delete($table, ['id' => $invite_id, 'org_id' => $org_id], ['%d','%d']);
+            if ($deleted === false) {
+                $wpdb->query('ROLLBACK');
+                return new WP_Error('invite_delete_failed', 'Failed to remove the invite.', ['status' => 500]);
+            }
+            $wpdb->query('COMMIT');
             return new WP_REST_Response(['deleted' => true], 200);
         }
 
@@ -808,7 +899,13 @@ class OrgUsersController
 
         global $wpdb;
         $table = $wpdb->prefix . 'kbs_user_org_roles';
-        $wpdb->delete($table, ['org_id' => $org_id, 'user_id' => $user_id], ['%d','%d']);
+        $wpdb->query('START TRANSACTION');
+        $deleted = $wpdb->delete($table, ['org_id' => $org_id, 'user_id' => $user_id], ['%d','%d']);
+        if ($deleted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('org_member_delete_failed', 'Failed to remove the user from the organization.', ['status' => 500]);
+        }
+        $wpdb->query('COMMIT');
 
         return new WP_REST_Response(['deleted' => true], 200);
     }

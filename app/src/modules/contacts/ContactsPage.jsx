@@ -2,7 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { archiveContact, createContact, getContact, updateContact } from "./api";
 import { useContacts } from "./hooks";
 import ContactForm from "./ContactForm.jsx";
+import ContactStatementPanel from "./ContactStatementPanel.jsx";
 import ContactsList from "./ContactsList.jsx";
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 import { useToast } from "../../components/ToastProvider";
 import { consumeQueryFlag } from "../../utils/locationFlags";
 
@@ -21,6 +24,7 @@ export default function ContactsPage() {
     const [editingContactId, setEditingContactId] = useState(null);
     const [editingContact, setEditingContact] = useState(null);
     const [loadingEditContact, setLoadingEditContact] = useState(false);
+    const [statementContact, setStatementContact] = useState(null);
     const [actionError, setActionError] = useState("");
     const { data, loading, error } = useContacts(filters, refreshKey);
     const toast = useToast();
@@ -50,6 +54,10 @@ export default function ContactsPage() {
         setEditingContact(null);
         setLoadingEditContact(false);
         setActionError("");
+    };
+
+    const closeStatement = () => {
+        setStatementContact(null);
     };
 
     const handleCreateContact = async (payload) => {
@@ -208,6 +216,7 @@ export default function ContactsPage() {
                     loading={loading}
                     error={error}
                     onEdit={handleEdit}
+                    onStatement={setStatementContact}
                     onArchive={handleArchive}
                 />
 
@@ -243,12 +252,20 @@ export default function ContactsPage() {
                     onClose={closeForm}
                     width="min(760px, 96vw)"
                 >
-                    {actionError ? <p className="text-red-600 text-sm">{actionError}</p> : null}
+                    <InlineNotice message={actionError} />
                     {loadingEditContact ? (
-                        <p className="kb-muted">Loading contact details…</p>
+                        <FeedbackState
+                            title="Loading contact details"
+                            description="Fetching the current contact record before editing."
+                            tone="loading"
+                        />
                     ) : editingContactId && !editingContact ? (
                         <div className="space-y-3">
-                            <p className="kb-muted">The contact details could not be loaded. Close this dialog and try again.</p>
+                            <FeedbackState
+                                title="Contact details could not be loaded"
+                                description="Close this dialog and try again. The record may have changed or been removed."
+                                tone="error"
+                            />
                             <div className="flex justify-end">
                                 <button type="button" className="kb-btn kb-btn--ghost" onClick={closeForm}>
                                     Close
@@ -263,6 +280,16 @@ export default function ContactsPage() {
                             submitLabel={editingContactId ? "Save Changes" : "Create Contact"}
                         />
                     )}
+                </Modal>
+            ) : null}
+
+            {statementContact ? (
+                <Modal
+                    title={`Statement · ${statementContact.name}`}
+                    onClose={closeStatement}
+                    width="min(1080px, 96vw)"
+                >
+                    <ContactStatementPanel contact={statementContact} />
                 </Modal>
             ) : null}
         </div>

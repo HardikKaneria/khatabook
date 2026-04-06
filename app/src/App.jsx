@@ -1,24 +1,26 @@
 // src/App.jsx
-import { useEffect, useState } from "react";
-import Login from "./pages/Login";
-import Home from "./pages/Home";
-import CompanySettings from "./pages/CompanySettings";
-import DashboardLayout from "./layouts/DashboardLayout";
+import { Suspense, lazy, useEffect, useState } from "react";
 import { loadAuth, clearAuth, saveAuth } from "./utils/authStorage";
-import Users from "./pages/UsersAdmin";
 import ToastProvider from "./components/ToastProvider";
 import apiClient, { configureApiClient } from "./lib/apiClient";
-import AccountsPage from "./modules/accounts/AccountsPage.jsx";
-import AccountDetailPage from "./modules/accounts/AccountDetailPage.jsx";
-import InvoicesPage from "./modules/invoices/InvoicesPage.jsx";
-import InvoiceDetailPage from "./modules/invoices/InvoiceDetailPage.jsx";
-import ExpensesPage from "./modules/expenses/ExpensesPage.jsx";
-import ExpenseDetailPage from "./modules/expenses/ExpenseDetailPage.jsx";
-import PaymentsPage from "./modules/payments/PaymentsPage.jsx";
-import ProfitTaxPage from "./modules/reports/ProfitTaxPage.jsx";
-import InvoiceSettingsPage from "./modules/settings/invoices/InvoiceSettingsPage.jsx";
-import ContactsPage from "./modules/contacts/ContactsPage.jsx";
-import AcceptInvite from "./pages/AcceptInvite.jsx";
+import RouteLoadingState from "./components/ui/RouteLoadingState.jsx";
+
+const Login = lazy(() => import("./pages/Login"));
+const Home = lazy(() => import("./pages/Home"));
+const CompanySettings = lazy(() => import("./pages/CompanySettings"));
+const DashboardLayout = lazy(() => import("./layouts/DashboardLayout"));
+const Users = lazy(() => import("./pages/UsersAdmin"));
+const AccountsPage = lazy(() => import("./modules/accounts/AccountsPage.jsx"));
+const AccountDetailPage = lazy(() => import("./modules/accounts/AccountDetailPage.jsx"));
+const InvoicesPage = lazy(() => import("./modules/invoices/InvoicesPage.jsx"));
+const InvoiceDetailPage = lazy(() => import("./modules/invoices/InvoiceDetailPage.jsx"));
+const ExpensesPage = lazy(() => import("./modules/expenses/ExpensesPage.jsx"));
+const ExpenseDetailPage = lazy(() => import("./modules/expenses/ExpenseDetailPage.jsx"));
+const PaymentsPage = lazy(() => import("./modules/payments/PaymentsPage.jsx"));
+const ProfitTaxPage = lazy(() => import("./modules/reports/ProfitTaxPage.jsx"));
+const InvoiceSettingsPage = lazy(() => import("./modules/settings/invoices/InvoiceSettingsPage.jsx"));
+const ContactsPage = lazy(() => import("./modules/contacts/ContactsPage.jsx"));
+const AcceptInvite = lazy(() => import("./pages/AcceptInvite.jsx"));
 
 const getOrgIdFromAuth = (auth) => {
     const user = auth?.user || {};
@@ -340,11 +342,29 @@ export default function App() {
     })();
 
     const content = route.slug === "accept-invite" ? (
-        <AcceptInvite auth={auth} onAuthenticated={setAuth} />
+        <Suspense fallback={<RouteLoadingState />}>
+            <AcceptInvite auth={auth} onAuthenticated={setAuth} />
+        </Suspense>
     ) : !isAuthed ? (
-        <Login />
+        <Suspense fallback={<RouteLoadingState />}>
+            <Login />
+        </Suspense>
     ) : (
-        <DashboardLayout user={userForLayout}>{Page}</DashboardLayout>
+        <Suspense fallback={<RouteLoadingState title="Loading workspace" description="Preparing the current organization shell." />}>
+            <DashboardLayout user={userForLayout}>
+                <Suspense
+                    fallback={
+                        <RouteLoadingState
+                            compact
+                            title="Loading page"
+                            description="Fetching the requested workspace module."
+                        />
+                    }
+                >
+                    {Page}
+                </Suspense>
+            </DashboardLayout>
+        </Suspense>
     );
 
     return <ToastProvider>{content}</ToastProvider>;

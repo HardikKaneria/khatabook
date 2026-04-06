@@ -5,6 +5,8 @@ import AccountStatementTable from "./AccountStatementTable.jsx";
 import MoneyInForm from "./MoneyInForm.jsx";
 import MoneyOutForm from "./MoneyOutForm.jsx";
 import TransferForm from "./TransferForm.jsx";
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 
 const moneyTypes = new Set(["BANK", "CASH", "WALLET"]);
 
@@ -86,10 +88,10 @@ export default function AccountDetailPage({ accountId }) {
 
     const header = (() => {
         if (accountLoading) {
-            return <p>Loading account…</p>;
+            return <FeedbackState title="Loading account" description="Fetching the account header and current balance." tone="loading" />;
         }
         if (accountError) {
-            return <p className="text-red-600">{accountError.message}</p>;
+            return <FeedbackState title="Unable to load account" description={accountError.message} tone="error" />;
         }
         if (!account) return null;
         return (
@@ -152,7 +154,7 @@ export default function AccountDetailPage({ accountId }) {
 
             {showMoneyIn && (
                 <Modal title="Record Receipt" onClose={() => setShowMoneyIn(false)}>
-                    {moneyInError ? <p className="text-red-600 text-sm">{moneyInError}</p> : null}
+                    <InlineNotice message={moneyInError} />
                     <MoneyInForm
                         onSubmit={handleMoneyIn}
                         onCancel={() => setShowMoneyIn(false)}
@@ -165,7 +167,7 @@ export default function AccountDetailPage({ accountId }) {
 
             {showMoneyOut && (
                 <Modal title="Record Payment" onClose={() => setShowMoneyOut(false)}>
-                    {moneyOutError ? <p className="text-red-600 text-sm">{moneyOutError}</p> : null}
+                    <InlineNotice message={moneyOutError} />
                     <MoneyOutForm
                         onSubmit={handleMoneyOut}
                         onCancel={() => setShowMoneyOut(false)}
@@ -178,7 +180,7 @@ export default function AccountDetailPage({ accountId }) {
 
             {showTransfer && (
                 <Modal title="Transfer Funds" onClose={() => setShowTransfer(false)}>
-                    {transferError ? <p className="text-red-600 text-sm">{transferError}</p> : null}
+                    <InlineNotice message={transferError} />
                     <TransferForm
                         onSubmit={handleTransfer}
                         onCancel={() => setShowTransfer(false)}

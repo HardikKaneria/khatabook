@@ -4,6 +4,8 @@ import ExpenseDetail from "./ExpenseDetail.jsx";
 import ExpenseForm from "./ExpenseForm.jsx";
 import { archiveExpense, updateExpense } from "./api";
 import { useToast } from "../../components/ToastProvider";
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 
 export default function ExpenseDetailPage({ expenseId }) {
     const [refreshKey, setRefreshKey] = useState(0);
@@ -45,7 +47,7 @@ export default function ExpenseDetailPage({ expenseId }) {
         <div className="space-y-4">
             <div className="flex items-start justify-between gap-3">
                 <h2 className="kb-h2" style={{ margin: 0 }}>
-                    Expense Detail
+                    {expense?.document_type === "BILL" ? "Vendor Bill Detail" : "Expense Detail"}
                 </h2>
                 {expense ? (
                     <div style={{ textAlign: "right" }}>
@@ -60,7 +62,7 @@ export default function ExpenseDetailPage({ expenseId }) {
                                 }}
                                 title={!expense.can_edit ? expense.edit_block_reason || "This expense can no longer be edited." : undefined}
                             >
-                                Edit Expense
+                                {expense.document_type === "BILL" ? "Edit Bill" : "Edit Expense"}
                             </button>
                             <button
                                 type="button"
@@ -83,9 +85,9 @@ export default function ExpenseDetailPage({ expenseId }) {
 
             <div className="kb-card" style={{ padding: 24 }}>
                 {loading ? (
-                    <p>Loading expense…</p>
+                    <FeedbackState title="Loading expense" description="Fetching the current expense details." tone="loading" />
                 ) : error ? (
-                    <p className="text-red-600">{error.message}</p>
+                    <FeedbackState title="Unable to load expense" description={error.message} tone="error" />
                 ) : (
                     <ExpenseDetail expense={expense} />
                 )}
@@ -93,13 +95,14 @@ export default function ExpenseDetailPage({ expenseId }) {
 
             {showEditForm && expense ? (
                 <Modal title="Edit Expense" onClose={() => setShowEditForm(false)}>
-                    {actionError ? <p className="text-red-600 text-sm">{actionError}</p> : null}
+                    <InlineNotice message={actionError} />
                     <ExpenseForm
                         initialData={expense}
                         onSubmit={handleUpdateExpense}
                         onCancel={() => setShowEditForm(false)}
                         submitLabel="Save Changes"
                         showPaymentFields={false}
+                        showExpenseAccountField={false}
                     />
                 </Modal>
             ) : null}

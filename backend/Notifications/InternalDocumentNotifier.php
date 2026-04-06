@@ -2,6 +2,8 @@
 
 namespace KBS\Notifications;
 
+use KBS\Core\SystemLogger;
+
 defined('ABSPATH') || exit;
 
 class InternalDocumentNotifier
@@ -124,12 +126,16 @@ class InternalDocumentNotifier
                 : wp_mail($recipient, $subject, kbs_render_email_body($message), ['Content-Type: text/html; charset=UTF-8']);
 
             if (!$sent) {
-                error_log(sprintf(
-                    '[Vyavhar Email] Internal %s notification failed. Org: %d Recipient: %s',
-                    strtolower($document_type),
-                    $org_id,
-                    $recipient
-                ));
+                SystemLogger::log_event(
+                    'internal_' . sanitize_key(strtolower($document_type)) . '_notification_failed',
+                    sprintf('Internal %s notification email was not sent.', strtolower($document_type)),
+                    [
+                        'org_id' => $org_id,
+                        'document_type' => strtolower($document_type),
+                    ],
+                    0,
+                    'backend/Notifications/InternalDocumentNotifier.php'
+                );
             }
         }
     }

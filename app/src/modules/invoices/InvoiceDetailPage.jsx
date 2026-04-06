@@ -1,12 +1,26 @@
 import { useEffect, useMemo, useState } from "react";
-import { payInvoice, updateInvoice } from "./api";
+import {
+    createInvoiceNote,
+    createInvoicePromise,
+    createRecurringProfile,
+    generateRecurringProfile,
+    payInvoice,
+    updateInvoice,
+    updateInvoicePromise,
+    updateRecurringProfile,
+} from "./api";
 import { useInvoice } from "./hooks";
 import InvoiceDetail from "./InvoiceDetail.jsx";
 import InvoicePaymentForm from "./InvoicePaymentForm.jsx";
 import InvoiceForm from "./InvoiceForm.jsx";
+import InvoiceNoteForm from "./InvoiceNoteForm.jsx";
+import InvoicePromiseForm from "./InvoicePromiseForm.jsx";
+import RecurringProfileForm from "./RecurringProfileForm.jsx";
 import { useAccounts } from "../accounts/hooks";
 import apiClient from "../../lib/apiClient";
 import { useToast } from "../../components/ToastProvider";
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 
 const isMoneyAccount = (acct) => ["BANK", "CASH", "WALLET"].includes((acct?.sub_type || "").toUpperCase());
 const isIncomeAccount = (acct) => (acct?.type || "").toUpperCase() === "INCOME";
@@ -16,11 +30,18 @@ export default function InvoiceDetailPage({ invoiceId }) {
     const [showPaymentForm, setShowPaymentForm] = useState(false);
     const [showEditForm, setShowEditForm] = useState(false);
     const [showEmailModal, setShowEmailModal] = useState(false);
+    const [showRecurringForm, setShowRecurringForm] = useState(false);
+    const [showPromiseForm, setShowPromiseForm] = useState(false);
     const [emailRecipients, setEmailRecipients] = useState("");
     const [emailError, setEmailError] = useState("");
     const [emailSending, setEmailSending] = useState(false);
     const [actionError, setActionError] = useState("");
     const [editError, setEditError] = useState("");
+    const [recurringError, setRecurringError] = useState("");
+    const [noteError, setNoteError] = useState("");
+    const [promiseError, setPromiseError] = useState("");
+    const [noteType, setNoteType] = useState("");
+    const [editingPromise, setEditingPromise] = useState(null);
     const [pdfGenerating, setPdfGenerating] = useState(false);
     const { data: invoice, loading, error } = useInvoice(invoiceId, refreshKey);
     const { data: accounts = [] } = useAccounts({}, refreshKey);
@@ -31,6 +52,7 @@ export default function InvoiceDetailPage({ invoiceId }) {
     const hasInvoice = Boolean(invoice);
     const canEditInvoice = Boolean(invoice?.can_edit);
     const canRecordPayment = Boolean(invoice && moneyAccounts.length && incomeAccounts.length);
+    const sourceRecurringProfile = invoice?.source_recurring_profile || null;
 
     useEffect(() => {
         if (!invoice) {
@@ -65,6 +87,82 @@ export default function InvoiceDetailPage({ invoiceId }) {
             setRefreshKey((value) => value + 1);
         } catch (err) {
             setEditError(err?.message || "Unable to update invoice.");
+        }
+    };
+
+    const handleRecurringSubmit = async (payload) => {
+        if (!invoice) return;
+        try {
+            setRecurringError("");
+            if (sourceRecurringProfile?.id) {
+                await updateRecurringProfile(sourceRecurringProfile.id, payload);
+                toast.success("Recurring billing plan updated.");
+            } else {
+                await createRecurringProfile(invoice.id, payload);
+                toast.success("Recurring billing plan created.");
+            }
+            setShowRecurringForm(false);
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            setRecurringError(err?.message || "Unable to save recurring billing.");
+        }
+    };
+
+    const handleGenerateRecurring = async (profile) => {
+        if (!profile?.id) return;
+        try {
+            setRecurringError("");
+            const response = await generateRecurringProfile(profile.id, {});
+            const generatedCount = Array.isArray(response?.generated) ? response.generated.length : 0;
+            toast.success(generatedCount ? `Generated ${generatedCount} recurring invoice${generatedCount === 1 ? "" : "s"}.` : "Recurring plan checked.");
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            setRecurringError(err?.message || "Unable to generate recurring invoice.");
+        }
+    };
+
+    const handleCreateNote = async (payload) => {
+        if (!invoice) return;
+        try {
+            setNoteError("");
+            await createInvoiceNote(invoice.id, payload);
+            toast.success(`${payload.note_type === "CREDIT" ? "Credit" : "Debit"} note saved.`);
+            setRefreshKey((value) => value + 1);
+            return true;
+        } catch (err) {
+            setNoteError(err?.message || "Unable to save invoice note.");
+            return false;
+        }
+    };
+
+    const handlePromiseSubmit = async (payload) => {
+        if (!invoice) return;
+        try {
+            setPromiseError("");
+            if (editingPromise?.id) {
+                await updateInvoicePromise(editingPromise.id, payload);
+                toast.success("Promise updated.");
+            } else {
+                await createInvoicePromise(invoice.id, payload);
+                toast.success("Promise recorded.");
+            }
+            setEditingPromise(null);
+            setShowPromiseForm(false);
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            setPromiseError(err?.message || "Unable to save promise.");
+        }
+    };
+
+    const handleQuickPromiseStatus = async (promise, status) => {
+        if (!promise?.id) return;
+        try {
+            setPromiseError("");
+            await updateInvoicePromise(promise.id, { status });
+            toast.success(`Promise marked ${status.toLowerCase()}.`);
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            setPromiseError(err?.message || "Unable to update promise.");
         }
     };
 
@@ -150,6 +248,16 @@ export default function InvoiceDetailPage({ invoiceId }) {
                             className="kb-btn kb-btn--secondary"
                             disabled={!hasInvoice}
                             onClick={() => {
+                                setRecurringError("");
+                                setShowRecurringForm(true);
+                            }}
+                        >
+                            {sourceRecurringProfile ? "Edit Recurring" : "Set Recurring"}
+                        </button>
+                        <button
+                            className="kb-btn kb-btn--secondary"
+                            disabled={!hasInvoice}
+                            onClick={() => {
                                 setEmailError("");
                                 setShowEmailModal(true);
                             }}
@@ -184,15 +292,61 @@ export default function InvoiceDetailPage({ invoiceId }) {
 
             {loading || error ? (
                 <div className="kb-card" style={{ padding: 24 }}>
-                    {loading ? <p>Loading invoice…</p> : <p className="text-red-600">{error?.message}</p>}
+                    {loading ? (
+                        <FeedbackState title="Loading invoice" description="Fetching the current invoice and payment state." tone="loading" />
+                    ) : (
+                        <FeedbackState title="Unable to load invoice" description={error?.message} tone="error" />
+                    )}
                 </div>
-            ) : (
-                <InvoiceDetail invoice={invoice} />
+                    ) : (
+                <InvoiceDetail
+                    invoice={invoice}
+                    onOpenNoteModal={(nextType) => {
+                        setNoteType(nextType);
+                        setNoteError("");
+                        setShowEditForm(false);
+                        setShowPaymentForm(false);
+                    }}
+                    onOpenPromiseModal={(promise = null) => {
+                        setEditingPromise(promise);
+                        setPromiseError("");
+                        setShowPromiseForm(true);
+                    }}
+                    onPromiseStatusChange={handleQuickPromiseStatus}
+                    onGenerateRecurring={handleGenerateRecurring}
+                />
             )}
+
+            {!loading && !error && invoice && noteType ? (
+                <Modal
+                    title={noteType === "CREDIT" ? "Add Credit Note" : "Add Debit Note"}
+                    onClose={() => {
+                        setNoteType("");
+                        setNoteError("");
+                    }}
+                >
+                    <InlineNotice message={noteError} />
+                    <InvoiceNoteForm
+                        noteType={noteType}
+                        invoice={invoice}
+                        onSubmit={async (payload) => {
+                            const success = await handleCreateNote(payload);
+                            if (success) {
+                                setNoteType("");
+                                setNoteError("");
+                            }
+                        }}
+                        onCancel={() => {
+                            setNoteType("");
+                            setNoteError("");
+                        }}
+                    />
+                </Modal>
+            ) : null}
 
             {showPaymentForm && (
                 <Modal title="Record Payment" onClose={() => setShowPaymentForm(false)}>
-                    {actionError ? <p className="text-red-600 text-sm">{actionError}</p> : null}
+                    <InlineNotice message={actionError} />
                     {canRecordPayment ? (
                         <InvoicePaymentForm
                             invoice={invoice}
@@ -211,7 +365,7 @@ export default function InvoiceDetailPage({ invoiceId }) {
 
             {showEditForm && invoice ? (
                 <Modal title="Edit Invoice" onClose={() => setShowEditForm(false)} width="min(700px, 96vw)">
-                    {editError ? <p className="text-red-600 text-sm">{editError}</p> : null}
+                    <InlineNotice message={editError} />
                     <InvoiceForm
                         initialData={invoice}
                         submitLabel="Save Changes"
@@ -221,9 +375,49 @@ export default function InvoiceDetailPage({ invoiceId }) {
                 </Modal>
             ) : null}
 
+            {showRecurringForm && invoice ? (
+                <Modal title={sourceRecurringProfile ? "Edit Recurring Plan" : "Create Recurring Plan"} onClose={() => setShowRecurringForm(false)} width="min(720px, 96vw)">
+                    <InlineNotice message={recurringError} />
+                    <RecurringProfileForm
+                        sourceInvoice={invoice}
+                        initialData={sourceRecurringProfile}
+                        submitLabel={sourceRecurringProfile ? "Save Plan" : "Create Plan"}
+                        onSubmit={handleRecurringSubmit}
+                        onCancel={() => setShowRecurringForm(false)}
+                    />
+                    {sourceRecurringProfile?.can_generate_now ? (
+                        <div className="flex justify-end" style={{ marginTop: 12 }}>
+                            <button type="button" className="kb-btn kb-btn--secondary" onClick={() => handleGenerateRecurring(sourceRecurringProfile)}>
+                                Generate Due Invoice
+                            </button>
+                        </div>
+                    ) : null}
+                </Modal>
+            ) : null}
+
+            {showPromiseForm && invoice ? (
+                <Modal title={editingPromise ? "Update Promise to Pay" : "Record Promise to Pay"} onClose={() => {
+                    setEditingPromise(null);
+                    setShowPromiseForm(false);
+                }}>
+                    <InlineNotice message={promiseError} />
+                    <InvoicePromiseForm
+                        invoice={invoice}
+                        promise={editingPromise}
+                        onSubmit={async (payload) => {
+                            await handlePromiseSubmit(payload);
+                        }}
+                        onCancel={() => {
+                            setEditingPromise(null);
+                            setShowPromiseForm(false);
+                        }}
+                    />
+                </Modal>
+            ) : null}
+
             {showEmailModal && (
                 <Modal title="Email Invoice" onClose={() => setShowEmailModal(false)}>
-                    {emailError ? <p className="text-red-600 text-sm">{emailError}</p> : null}
+                    <InlineNotice message={emailError} />
                     <form className="space-y-3" onSubmit={handleSendEmail}>
                         <div>
                             <label className="kb-muted">Recipient Emails</label>

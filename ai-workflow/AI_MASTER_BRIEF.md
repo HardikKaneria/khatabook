@@ -17,14 +17,18 @@ The current product already supports:
 - organization-scoped membership and org switching
 - accounts and journal-backed money movement
 - first-class customer and vendor contact management
+- customer statements from live invoice and payment activity
 - operational dashboard summaries on the SPA home screen
-- company settings limited to confirmed live settings categories
+- company settings limited to confirmed live settings categories plus company-logo upload for the confirmed fallback-render consumer
 - invoice creation, editing, payment posting, preview, PDF, and email
+- recurring billing profiles on live `vy_*` invoices with manual and scheduled generation
+- invoice-linked credit notes and debit notes that adjust receivables server-side
+- promise-to-pay tracking tied to invoice collections workflows
 - payment activity visibility beyond invoice detail
 - record-level financial history for invoices, expenses, and invoice payments
 - invoice template settings and logo upload
 - expense creation, editing, archive, and detail tracking
-- profit, GST, and tax summary reporting
+- profit, GST, tax, receivables aging, invoice status, top-balance, and monthly trend reporting
 - internal business email notifications
 
 ---
@@ -66,11 +70,17 @@ It should not drift toward:
 ### 3.2 Frontend
 - React 18 + Vite app in `plugins/khatabook/app`
 - custom pathname router in `app/src/App.jsx`
+- route-level page boundaries are now lazy-loaded; keep new routes compatible with that loading model
 - Ant Design plus repo-specific components/styles
 - module shape should remain:
   - `api.js`
   - `hooks.js`
   - page/list/detail/form components
+- active modules now also rely on shared frontend foundations:
+  - `app/src/hooks/useAsyncResource.js`
+  - `app/src/utils/buildQuery.js`
+  - `app/src/components/ui/FeedbackState.jsx`
+  - `app/src/components/ui/InlineNotice.jsx`
 
 ### 3.3 Data direction
 Canonical business schema direction:
@@ -131,7 +141,7 @@ The product should feel:
 
 ### Testing
 - lightweight custom PHP harness in `plugins/khatabook/tests`
-- helper-level and controller-rule coverage now exists for auth, org access, invoice create/update/payment list, expense create/update/archive, and invoice template behavior
+- helper-level and controller-rule coverage now exists for auth, org access, invoice create/update/payment list, recurring billing generation, invoice credit/debit notes, promise-to-pay state changes, expense create/update/archive, report endpoints, transaction rollback behavior, system logging, and invoice template behavior
 - no browser test suite currently active
 - no shared typed contract layer currently active
 
@@ -192,6 +202,9 @@ Primary files:
 ### Invoices
 Purpose:
 - invoice create/list/detail/edit
+- recurring billing profile setup and generation
+- invoice-linked credit/debit adjustments
+- invoice-linked promise-to-pay tracking
 - payment posting
 - payment activity visibility
 - email and PDF generation
@@ -200,6 +213,7 @@ Purpose:
 Primary files:
 - `backend/Api/VyRestInvoices.php`
 - `backend/Helpers/InvoiceEditHelper.php`
+- `backend/Helpers/InvoiceFinancialHelper.php`
 - `backend/Helpers/InvoiceEmailHelper.php`
 - `backend/Invoices/VyInvoicePdf.php`
 - `app/src/modules/invoices/*`
@@ -223,6 +237,11 @@ Purpose:
 - profit summary
 - GST summary
 - tax estimate
+- receivables snapshot
+- receivables aging
+- invoice status mix
+- top customer balances
+- monthly invoice and expense trend
 
 Primary files:
 - `backend/Api/VyRestReports.php`
@@ -323,6 +342,9 @@ Future UI work must follow:
 - numbering integrity must be preserved
 - preview, HTML render, email, and PDF must stay aligned
 - edit locking rules must remain enforceable server-side
+- recurring invoices must generate through the live invoice creation path so numbering, org safety, and document behavior stay consistent
+- credit/debit notes must adjust invoice balance due on the server, and payments must validate against the adjusted balance
+- promise-to-pay tracking is operational only; it must not be treated as payment settlement until a real payment is posted
 
 ### 8.6 Settings
 - generic org settings source: `kbs_settings`

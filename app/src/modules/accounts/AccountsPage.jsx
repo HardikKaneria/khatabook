@@ -5,6 +5,8 @@ import { useAccounts } from "./hooks";
 import AccountsSummary from "./AccountsSummary.jsx";
 import MoneyAccountsList from "./MoneyAccountsList.jsx";
 import AccountForm from "./AccountForm.jsx";
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 
 const isMoneyAccount = (acct) =>
     ["BANK", "CASH", "WALLET"].includes((acct?.sub_type || "").toUpperCase());
@@ -23,9 +25,15 @@ export default function AccountsPage() {
     };
 
     const allAccountsTable = useMemo(() => {
-        if (loading) return <p className="kb-muted">Loading accounts…</p>;
-        if (error) return <p className="text-red-600">{error.message}</p>;
-        if (!accounts.length) return <p>No accounts yet.</p>;
+        if (loading) {
+            return <FeedbackState title="Loading accounts" description="Fetching the current ledger list." tone="loading" />;
+        }
+        if (error) {
+            return <FeedbackState title="Unable to load accounts" description={error.message} tone="error" />;
+        }
+        if (!accounts.length) {
+            return <FeedbackState title="No accounts yet" description="Create an account to start recording balances and transactions." tone="empty" />;
+        }
         const columns = [
             {
                 title: "Name",
@@ -101,7 +109,7 @@ export default function AccountsPage() {
                 <div className="accounts-column">
                     <section className="accounts-card">
                         {loading && !accounts.length ? (
-                            <p>Loading summary…</p>
+                            <FeedbackState title="Loading account summary" description="Preparing the balance overview for all current accounts." tone="loading" />
                         ) : (
                             <AccountsSummary accounts={accounts} />
                         )}
@@ -115,7 +123,7 @@ export default function AccountsPage() {
                             </div>
                         </div>
                         {loading && !accounts.length ? (
-                            <p>Loading…</p>
+                            <FeedbackState title="Loading money accounts" description="Preparing the current cash and bank accounts." tone="loading" />
                         ) : (
                             <MoneyAccountsList accounts={moneyAccounts} onSelectAccount={goToAccount} />
                         )}
@@ -134,7 +142,7 @@ export default function AccountsPage() {
 
             {showAccountForm && (
                 <Modal title="New Account" onClose={() => setShowAccountForm(false)}>
-                    {actionError ? <p className="text-red-600 text-sm">{actionError}</p> : null}
+                    <InlineNotice message={actionError} />
                     <AccountForm onSubmit={handleCreateAccount} onCancel={() => setShowAccountForm(false)} />
                 </Modal>
             )}

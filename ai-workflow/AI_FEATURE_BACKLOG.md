@@ -44,13 +44,18 @@ These are active enough to treat as the current working baseline:
 - Org users and invite management
 - Accounts and journal posting
 - Contacts list/create/edit/archive
+- Customer statements from live invoice and payment data
 - Operational dashboard summaries and quick actions
-- Company settings limited to confirmed live categories
+- Company settings limited to confirmed live categories plus company-logo upload for real consumers
 - Invoice create/edit/pay/email/PDF
+- Recurring billing on live `vy_*` invoices
+- Invoice credit notes and debit notes
+- Invoice-linked promise-to-pay tracking
 - Payment activity page plus dashboard visibility
 - Record-level history for invoices, expenses, and invoice payments
 - Expense create/list/detail/update/archive
 - Invoice templates, preview, and logo upload
+- Profit, GST, tax, receivables aging, invoice status, and monthly trend reporting
 
 Do not re-add these as brand new TODO features unless the task is specifically to improve or expand them.
 
@@ -298,7 +303,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P1-03 — Expand reports using current `vy_*` journal and document data
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Reports
 - Problem:
   Reports exist, but are narrow compared to current business needs.
@@ -324,12 +329,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - at least several new reports or report views are added
   - reports remain consistent with current org and accounting logic
   - empty and loading states are handled cleanly
+- Notes:
+  Completed on 2026-04-06. `ProfitTaxPage` now includes current receivables snapshot cards, receivables aging, invoice status mix for the selected period, top customer balances, and monthly invoice/expense trend views backed by `GET /vy/v1/reports/receivables-summary` and `GET /vy/v1/reports/monthly-trends`. The implementation stays on current `vy_*` invoices, payments, expenses, and journals, and deliberately does not invent a payables model where the current expense lifecycle does not yet support one.
 
 ---
 
 ## P1-04 — Consolidate operational logging
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Observability
 - Problem:
   Logs are split between structured DB logging and raw `error_log()` usage.
@@ -352,12 +359,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - logging is clearer and more consistent
   - common operational failures are easier to trace
+- Notes:
+  Completed on 2026-04-06. High-value invoice, expense, settings, email, pending-user, notification, and QR-generation failures now route through `KBS\\Core\\SystemLogger` into `kbs_system_logs`, with raw `error_log()` intentionally left only for the frontend boot error path and the logger’s own fallback path.
 
 ---
 
 ## P1-05 — Add transactional safety or compensating behavior for multi-step writes
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Data Integrity
 - Problem:
   Multi-table business flows currently lack explicit transaction boundaries.
@@ -378,12 +387,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - highest-risk multi-step writes are safer against partial failure
   - failure behavior is more explicit and documented
+- Notes:
+  Completed on 2026-04-06. Invoice create, invoice payment, and expense create now run inside explicit transaction boundaries, and `VyJournalEngine::create_journal_entry()` now cleans up failed journal-line inserts. The current run intentionally focused on the live financial write paths rather than broad org/admin rewrites.
 
 ---
 
 ## P1-06 — Tighten operational admin flows
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Admin Tooling
 - Problem:
   Pending users and logs are functional, but split and somewhat thin operationally.
@@ -403,6 +414,8 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - admin support flows are easier to operate
   - no unsupported or misleading controls are exposed
+- Notes:
+  Completed on 2026-04-06. The wp-admin pending-user, registration-log, system-log, and OTP-attempt pages now reuse paginated filtered controller responses instead of raw latest-100 queries, and `UsersAdmin.jsx` now separates active members from pending invites.
 
 ---
 
@@ -410,7 +423,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P2-01 — Extract duplicated frontend async/query helpers
 - Priority: P2
-- Status: IMPROVE
+- Status: DONE
 - Area: Frontend Foundations
 - Problem:
   Repeated `useAsync` and `buildQuery` logic exists across modules.
@@ -431,12 +444,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - duplicated helper behavior is reduced
   - modules continue to behave the same from the user’s perspective
+- Notes:
+  Completed on 2026-04-06. Shared `app/src/hooks/useAsyncResource.js` and `app/src/utils/buildQuery.js` now back the active accounts, invoices, expenses, contacts, reports, and payments modules.
 
 ---
 
 ## P2-02 — Normalize frontend list/detail/form patterns
 - Priority: P2
-- Status: IMPROVE
+- Status: DONE
 - Area: Frontend Consistency
 - Problem:
   Business pages mix patterns in ways that reduce consistency.
@@ -461,12 +476,42 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - major business pages feel more consistent
   - patterns align better with `AI_UX_DOCTRINE.md`
+- Notes:
+  Completed on 2026-04-06. Shared `FeedbackState` and `InlineNotice` primitives now cover the active list/detail/form surfaces touched by accounts, invoices, expenses, contacts, payments, users, and record history.
+
+---
+
+## P2-02A — Revisit bundle size and route-level loading
+- Priority: P2
+- Status: DONE
+- Area: Frontend Performance
+- Problem:
+  The production Vite build still emits a large main bundle warning.
+- Why:
+  Operational screens are growing, and route-level loading is now the cleanest safe performance task after the recent consistency cleanup.
+- Scope:
+  - inspect current chunk composition
+  - add route-level or module-level lazy loading where it fits the existing manual router
+  - protect auth hydration and org-aware startup behavior
+- Constraints:
+  - do not replace the current routing approach wholesale
+  - do not break invoice preview/settings or authenticated shell boot
+- Primary Entry Points:
+  - `plugins/khatabook/app/src/App.jsx`
+  - `plugins/khatabook/app/src/pages/*`
+  - `plugins/khatabook/app/src/modules/*`
+  - `plugins/khatabook/app/vite.config.*`
+- Acceptance Criteria:
+  - the bundle warning is materially reduced or meaningfully narrowed
+  - route/module loading remains production-safe
+- Notes:
+  Completed on 2026-04-06. `App.jsx` now lazy-loads stable route boundaries instead of eagerly importing every page, and `vite.config.js` now emits smaller manual chunks for React, Ant Design shell/forms, icons, and shared vendor code. The production build no longer emits the earlier oversized-main-bundle warning.
 
 ---
 
 ## P2-03 — Add company media handling only for real consumers
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Company Media
 - Problem:
   Invoice logo upload exists, but broader company assets are unclear or URL-first.
@@ -484,6 +529,8 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - upload flows exist only for actually-used assets
   - UI does not imply unsupported document rendering features
+- Notes:
+  Completed on 2026-04-06. `CompanySettings.jsx` now exposes only a real uploaded company logo, backed by a safe WordPress media flow in `SettingsController.php`. The UI explicitly positions it as the organization identity logo and the fallback invoice logo when invoice settings do not define an override.
 
 ---
 
@@ -491,7 +538,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P2-04 — Customer statements
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Customer Management / Billing
 - Problem:
   The broader product vision expects customer statement visibility, but the current product does not surface this as a first-class workflow.
@@ -505,15 +552,17 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - stay grounded in current invoice/payment data
 - Acceptance Criteria:
   - users can review a customer statement without manual reconstruction
+- Notes:
+  Completed on 2026-04-06. `VyRestContacts.php` now exposes a contact-scoped statement endpoint grounded in live `vy_invoices` and `vy_invoice_payments`, `ReportHelper.php` computes statement balances and running activity, and the contacts module surfaces statements directly from customer rows without creating a second receivables model.
 
 ---
 
 ## P2-05 — Recurring billing
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Billing Extensions
 - Problem:
-  Recurring billing is part of product vision but not active in the current repo.
+  Recurring billing was a confirmed product gap on top of the active invoice model.
 - Why:
   Strong business value after the current billing core is stabilized.
 - Scope:
@@ -526,15 +575,17 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - build only after core current queue is stable
 - Acceptance Criteria:
   - recurring invoicing works with current invoice model and org safety
+- Notes:
+  Completed on 2026-04-06. Recurring billing now runs on dedicated `vy_invoice_recurring_profiles` and `vy_invoice_recurring_items` tables, generates real invoices through the live `VyRestInvoices` creation path, preserves org safety and invoice numbering, and supports both manual generation and scheduled processing via the plugin recurring runner.
 
 ---
 
 ## P2-06 — Credit notes and debit notes
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Billing Extensions
 - Problem:
-  The product vision includes credit/debit adjustments, but the current live module does not.
+  Invoice-linked credit/debit adjustments were a confirmed gap in the live invoice lifecycle.
 - Why:
   Important business completeness feature after core invoice and expense maturity.
 - Scope:
@@ -547,15 +598,17 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - preserve accounting integrity
 - Acceptance Criteria:
   - invoice-linked credit/debit adjustments are safely supported
+- Notes:
+  Completed on 2026-04-06. Invoice-linked credit and debit notes now persist to `vy_invoice_notes`, adjust invoice financial truth through `InvoiceFinancialHelper.php`, block over-crediting, surface in invoice detail/list and customer statements, and participate in payment validation and receivables reporting.
 
 ---
 
 ## P2-07 — Promise-to-pay tracking
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Collections
 - Problem:
-  Collections workflows in the product vision require operational tracking of customer payment promises.
+  Collections workflows needed operational tracking of customer payment promises against live invoices.
 - Why:
   Strong practical value after payment visibility is improved.
 - Scope:
@@ -568,6 +621,8 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - add only after payment visibility base exists
 - Acceptance Criteria:
   - users can track customer payment promises operationally
+- Notes:
+  Completed on 2026-04-06. Promise-to-pay records now persist to `vy_invoice_promises`, stay tied to the live invoice/contact context, supersede older open promises automatically, surface on invoice detail and the payments page, and auto-mark as kept when matching payments are posted.
 
 ---
 
@@ -588,6 +643,46 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - align with current expense and journal model
 - Acceptance Criteria:
   - vendor bill workflows are supported without duplicating the expense system blindly
+
+---
+
+## P2-09 — Replace dashboard receivables approximation with the server-side summary
+- Priority: P2
+- Status: TODO
+- Area: Dashboard Reliability
+- Problem:
+  The Home dashboard still derives open receivables from the latest 100 open invoices per status instead of the newer server-side receivables summary.
+- Why:
+  Receivables accuracy should now use the same live summary logic that already powers the reporting surface.
+- Scope:
+  - switch Home to the receivables summary API
+  - preserve quick visibility for overdue and open balances
+  - remove or narrow the current truncation warning once the source is accurate
+- Constraints:
+  - keep the dashboard operational and fast
+  - reuse the current reports helper and endpoint path instead of duplicating balance logic in the client
+- Acceptance Criteria:
+  - Home receivables numbers match the live server summary instead of a capped invoice subset
+
+---
+
+## P2-10 — Add rollback discipline to org member and invite writes
+- Priority: P2
+- Status: TODO
+- Area: Org Management Reliability
+- Problem:
+  Org member/invite flows still perform multi-step writes without the rollback discipline now present in the financial controllers.
+- Why:
+  Membership, role, and invite changes are operationally sensitive and should fail more predictably.
+- Scope:
+  - inspect add/remove/invite/resend flows in `OrgUsersController.php`
+  - add explicit transaction boundaries or compensating cleanup where feasible
+  - keep current permissions and email behavior intact
+- Constraints:
+  - do not redesign the org management model
+  - preserve the current invite and member UX contracts
+- Acceptance Criteria:
+  - the highest-risk org member/invite write flows fail safely without leaving partial membership state behind
 
 ---
 
@@ -788,8 +883,18 @@ These can be promoted later after:
 4. P1-03 — reports expansion
 5. P1-04 — logging consolidation
 6. P1-05 — transactional safety
-11. P1-06 — admin tooling improvement
-12. P2 structural cleanup items
-13. P2 expansion items
-14. P3 advanced intelligence items
-15. blocked items only after explicit decisions
+7. P1-06 — admin tooling improvement
+8. P2-01 — shared async/query cleanup
+9. P2-02 — UI pattern normalization
+10. P2-02A — bundle size and route-level loading
+11. P2-03 — company media handling only for real consumers
+12. P2-04 — customer statements
+13. P2-05 — recurring billing
+14. P2-06 — credit notes and debit notes
+15. P2-07 — promise-to-pay tracking
+16. P2-08 — vendor bills / purchase-bill workflow
+17. P2-09 — dashboard receivables server-summary alignment
+18. P2-10 — org member/invite rollback discipline
+19. P2 expansion items
+20. P3 advanced intelligence items
+21. blocked items only after explicit decisions

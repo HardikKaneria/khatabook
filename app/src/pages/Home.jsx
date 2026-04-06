@@ -3,7 +3,7 @@ import { getAccounts } from "../modules/accounts/api";
 import { getExpenses } from "../modules/expenses/api";
 import { getInvoices } from "../modules/invoices/api";
 import { getPayments } from "../modules/payments/api";
-import { getGstSummary, getProfitSummary, getTaxEstimate } from "../modules/reports/api";
+import { getGstSummary, getProfitSummary, getReceivablesSummary, getTaxEstimate } from "../modules/reports/api";
 
 const isMoneyAccount = (account) =>
     ["BANK", "CASH", "WALLET"].includes(String(account?.sub_type || "").toUpperCase());
@@ -33,11 +33,10 @@ export default function Home({ user }) {
         loading: true,
         error: "",
         invoices: [],
-        openInvoices: [],
-        openInvoicesTotal: 0,
         payments: [],
         expenses: [],
         accounts: [],
+        receivables: null,
         profit: null,
         gst: null,
         tax: null,
@@ -52,11 +51,10 @@ export default function Home({ user }) {
 
             const results = await Promise.allSettled([
                 getInvoices({ per_page: 5 }),
-                getInvoices({ status: "SENT", per_page: 100 }),
-                getInvoices({ status: "PARTIAL", per_page: 100 }),
                 getPayments({ per_page: 5 }),
                 getExpenses({ per_page: 5, status: "ACTIVE" }),
                 getAccounts(),
+                getReceivablesSummary({ ...range, as_of: range.to }),
                 getProfitSummary(range),
                 getGstSummary(range),
                 getTaxEstimate(range),
@@ -68,11 +66,10 @@ export default function Home({ user }) {
 
             const [
                 recentInvoicesResult,
-                sentInvoicesResult,
-                partialInvoicesResult,
                 recentPaymentsResult,
                 recentExpensesResult,
                 accountsResult,
+                receivablesResult,
                 profitResult,
                 gstResult,
                 taxResult,
@@ -83,7 +80,9 @@ export default function Home({ user }) {
             const accountError = accountsResult.status === "rejected" ? accountsResult.reason : null;
             const paymentError = recentPaymentsResult.status === "rejected" ? recentPaymentsResult.reason : null;
             const reportError =
-                profitResult.status === "rejected"
+                receivablesResult.status === "rejected"
+                    ? receivablesResult.reason
+                    : profitResult.status === "rejected"
                     ? profitResult.reason
                     : gstResult.status === "rejected"
                         ? gstResult.reason
@@ -91,36 +90,14 @@ export default function Home({ user }) {
                             ? taxResult.reason
                             : null;
 
-            const sentOpenInvoices = sentInvoicesResult.status === "fulfilled"
-                ? (sentInvoicesResult.value?.data || [])
-                : [];
-            const partialOpenInvoices = partialInvoicesResult.status === "fulfilled"
-                ? (partialInvoicesResult.value?.data || [])
-                : [];
-            const openInvoices = [...sentOpenInvoices, ...partialOpenInvoices]
-                .sort((left, right) => {
-                    const leftDue = left?.due_date || left?.date || "";
-                    const rightDue = right?.due_date || right?.date || "";
-                    return leftDue.localeCompare(rightDue);
-                });
-
-            const openInvoicesTotal =
-                (sentInvoicesResult.status === "fulfilled"
-                    ? Number(sentInvoicesResult.value?.pagination?.total || sentOpenInvoices.length)
-                    : 0)
-                + (partialInvoicesResult.status === "fulfilled"
-                    ? Number(partialInvoicesResult.value?.pagination?.total || partialOpenInvoices.length)
-                    : 0);
-
             setState({
                 loading: false,
                 error: invoiceError?.message || paymentError?.message || expenseError?.message || accountError?.message || reportError?.message || "",
                 invoices: recentInvoicesResult.status === "fulfilled" ? (recentInvoicesResult.value?.data || []) : [],
-                openInvoices,
-                openInvoicesTotal,
                 payments: recentPaymentsResult.status === "fulfilled" ? (recentPaymentsResult.value?.data || []) : [],
                 expenses: recentExpensesResult.status === "fulfilled" ? (recentExpensesResult.value?.data || []) : [],
                 accounts: accountsResult.status === "fulfilled" ? (accountsResult.value || []) : [],
+                receivables: receivablesResult.status === "fulfilled" ? receivablesResult.value : null,
                 profit: profitResult.status === "fulfilled" ? profitResult.value : null,
                 gst: gstResult.status === "fulfilled" ? gstResult.value : null,
                 tax: taxResult.status === "fulfilled" ? taxResult.value : null,
@@ -138,29 +115,13 @@ export default function Home({ user }) {
     );
 
     const receivables = useMemo(() => {
-        const today = new Date().toISOString().slice(0, 10);
-        let outstandingAmount = 0;
-        let overdueAmount = 0;
-        let overdueCount = 0;
-
-        state.openInvoices.forEach((invoice) => {
-            const balance = Number(invoice?.balance_due ?? invoice?.total ?? 0);
-            outstandingAmount += balance;
-            const dueDate = invoice?.due_date || invoice?.date;
-            if (dueDate && dueDate < today && balance > 0) {
-                overdueAmount += balance;
-                overdueCount += 1;
-            }
-        });
-
         return {
-            outstandingAmount,
-            overdueAmount,
-            overdueCount,
-            invoiceCount: state.openInvoicesTotal,
-            truncated: state.openInvoicesTotal > state.openInvoices.length,
+            outstandingAmount: Number(state.receivables?.outstanding_amount || 0),
+            overdueAmount: Number(state.receivables?.overdue_amount || 0),
+            overdueCount: Number(state.receivables?.overdue_count || 0),
+            invoiceCount: Number(state.receivables?.open_invoice_count || 0),
         };
-    }, [state.openInvoices, state.openInvoicesTotal]);
+    }, [state.receivables]);
 
     const monthExpenseTotal = useMemo(
         () => state.expenses.reduce((sum, expense) => sum + Number(expense?.amount || 0), 0),
@@ -226,12 +187,6 @@ export default function Home({ user }) {
                     loading={state.loading}
                 />
             </section>
-
-            {receivables.truncated ? (
-                <p className="kb-muted" style={{ marginTop: 0 }}>
-                    Receivables and overdue totals are based on the latest 100 sent invoices and the latest 100 partial invoices.
-                </p>
-            ) : null}
 
             <div className="dashboard-home__grid">
                 <section className="dashboard-home__card">

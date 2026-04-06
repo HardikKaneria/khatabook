@@ -18,6 +18,7 @@ It contains:
 - React/Vite frontend under `plugins/khatabook/app/src`
 - plugin admin screens under `backend/Admin`
 - lightweight PHP tests under `plugins/khatabook/tests`
+- route-level frontend chunks now resolve through lazy-loaded page boundaries in `app/src/App.jsx`
 
 ## 2. Backend Architecture Map
 
@@ -38,6 +39,8 @@ It contains:
     - `init` -> `KBS\Admin\AdminMenu::init`
     - `admin_init` -> `KBS\Core\AdminAccess::restrict_dashboard`
     - `rest_api_init` -> `KBS\Endpoint\EndpointManager::register_endpoints`
+    - `init` -> recurring invoice runner bootstrap
+    - `kbs_process_recurring_invoices` -> recurring invoice generation job
     - `admin_init` -> `KBS\Admin\PendingUserController::handle_actions`
     - `after_setup_theme` -> `KBS\Core\AdminAccess::hide_admin_bar`
     - `login_redirect` -> `KBS\Core\AdminAccess::redirect_after_login`
@@ -61,6 +64,9 @@ It contains:
   - `vy/v1`
     - accounts
     - invoices
+    - recurring invoice profiles
+    - invoice notes
+    - invoice promises
     - payments
     - expenses
     - contacts
@@ -122,18 +128,26 @@ It contains:
 
 - `plugins/khatabook/backend/Api/VyRestContacts.php`
   - list/create/get/update/archive for `vy_contacts`
+  - contact-scoped customer statements from live invoice/payment data
 - `plugins/khatabook/app/src/modules/contacts/*`
-  - dedicated contacts list, form, edit, archive, and pagination UI
+  - dedicated contacts list, form, edit, archive, statement modal, and pagination UI
 
 #### Invoices
 
 - `plugins/khatabook/backend/Api/VyRestInvoices.php`
   - list/create/get/update/pay/email/generate PDF
+  - recurring profile create/list/get/update/manual-generate
+  - invoice-linked credit/debit notes
+  - invoice-linked promise-to-pay tracking
   - payment activity list via `GET /vy/v1/payments`
   - next invoice number
   - description suggestions
   - create/update work on `vy_invoices` and `vy_invoice_items`
   - payments write to `vy_invoice_payments`
+
+- `plugins/khatabook/backend/Helpers/InvoiceFinancialHelper.php`
+  - applies invoice credit/debit note totals
+  - computes adjusted invoice balances used by invoice detail, payments, reports, and statements
 
 - `plugins/khatabook/backend/Helpers/InvoiceEditHelper.php`
   - Central invoice edit eligibility rules
@@ -172,10 +186,12 @@ It contains:
   - profit summary
   - GST summary
   - tax estimate
+  - receivables summary
+  - monthly trends
 
 - `plugins/khatabook/backend/Helpers/ReportHelper.php`
   - Reads effective org/company/tax settings
-  - Computes report aggregates from `vy_*` financial tables
+  - Computes report aggregates from `vy_*` invoices, payments, expenses, accounts, and journals
 
 ### 2.5 Invoice template and rendering system
 
@@ -212,6 +228,7 @@ It contains:
     - `company`
     - `sales`
     - `tax`
+  - company-logo upload/delete for the real `company.logo_url` consumer path
   - older hidden categories may still exist in stored rows from earlier iterations
   - includes optimistic concurrency versions and ETag support
 
@@ -241,9 +258,13 @@ It contains:
 
 - `plugins/khatabook/backend/Api/AdminData.php`
   - paginated admin data endpoints for logs and OTP attempts
+- `plugins/khatabook/backend/Admin/AdminPage.php`
+  - shared wp-admin page shell
+  - shared filter and pagination helpers now used by the live admin support pages
 
 - `plugins/khatabook/backend/Core/SystemLogger.php`
   - writes `kbs_system_logs` and `kbs_registration_logs`
+  - now serves as the main path for high-value operational failure logging
 
 - `plugins/khatabook/backend/Core/RecordAuditLogger.php`
   - writes record-level history to `vy_record_history`
@@ -257,7 +278,7 @@ It contains:
     - `mpdf/mpdf`
     - `mpdf/qrcode`
   - test entry: `@php tests/run.php`
-  - current automated coverage includes helper and controller-rule tests under `plugins/khatabook/tests`
+  - current automated coverage includes helper and controller-rule tests under `plugins/khatabook/tests`, including report endpoints, write rollback safety, and operational logger coverage
 
 - `plugins/khatabook/app/package.json`
   - React 18
@@ -285,6 +306,7 @@ It contains:
     - `/contacts`
     - `/invoices`
     - `/expenses`
+    - `/payments`
     - `/reports`
     - `/settings/invoices`
     - `/company-settings`
@@ -308,6 +330,7 @@ It contains:
     - `/invoices/:id`
     - `/expenses`
     - `/expenses/:id`
+    - `/payments`
     - `/reports`
     - `/settings/invoices`
     - `/company-settings`
@@ -329,13 +352,25 @@ It contains:
   - injects `X-KBS-Token` or `X-WP-Nonce`
   - dispatches `kbs-auth-invalid` on token auth failure
 
+- `plugins/khatabook/app/src/utils/buildQuery.js`
+  - shared query-string builder for active module API files
+
 - `plugins/khatabook/app/src/utils/authStorage.js`
   - browser auth persistence
   - AES-GCM when Web Crypto is available
   - fallback plain localStorage payload when crypto is unavailable
 
+- `plugins/khatabook/app/src/hooks/useAsyncResource.js`
+  - shared async loading hook used by the active module hooks
+
 - `plugins/khatabook/app/src/components/ToastProvider.jsx`
   - toast abstraction used across pages
+
+- `plugins/khatabook/app/src/components/ui/FeedbackState.jsx`
+  - shared loading / empty / error surface for active operational screens
+
+- `plugins/khatabook/app/src/components/ui/InlineNotice.jsx`
+  - shared inline form/action notice surface
 
 ### 3.3 Page-level frontend entry points
 
@@ -353,6 +388,7 @@ It contains:
 
 - `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
   - org invite and role management frontend
+  - separates active members from pending invites for operational clarity
 
 - `plugins/khatabook/app/src/pages/Home.jsx`
   - live operational dashboard using invoices, expenses, accounts, and report APIs
@@ -388,6 +424,10 @@ It contains:
 - `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
 - `plugins/khatabook/app/src/modules/invoices/InvoiceDetail.jsx`
 - `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx`
+- `plugins/khatabook/app/src/modules/invoices/RecurringProfileForm.jsx`
+- `plugins/khatabook/app/src/modules/invoices/RecurringProfilesList.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceNoteForm.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoicePromiseForm.jsx`
 
 #### Expenses
 
@@ -449,6 +489,10 @@ These are the active transaction/business tables confirmed in code:
 - `vy_invoices`
 - `vy_invoice_items`
 - `vy_invoice_payments`
+- `vy_invoice_recurring_profiles`
+- `vy_invoice_recurring_items`
+- `vy_invoice_notes`
+- `vy_invoice_promises`
 - `vy_expenses`
 - `vy_journal_entries`
 - `vy_journal_lines`
@@ -467,6 +511,7 @@ They are actively used by:
 - `VyRestReports.php`
 - `VyRestInvoiceSettings.php`
 - `VyInvoicePdf.php`
+- `InvoiceFinancialHelper.php`
 
 ### 4.2 Support tables still active in the current product
 

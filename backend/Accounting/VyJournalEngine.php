@@ -80,7 +80,7 @@ class VyJournalEngine
         $journal_id = (int) $wpdb->insert_id;
 
         foreach ($lines as $line) {
-            $wpdb->insert(
+            $insertedLine = $wpdb->insert(
                 self::lines_table(),
                 [
                     'journal_id' => $journal_id,
@@ -93,6 +93,13 @@ class VyJournalEngine
                 ],
                 ['%d','%d','%d','%f','%f','%s','%s']
             );
+
+            if ($insertedLine === false) {
+                $wpdb->delete(self::lines_table(), ['journal_id' => $journal_id], ['%d']);
+                $wpdb->delete(self::entries_table(), ['id' => $journal_id], ['%d']);
+
+                return new WP_Error('vy_journal_line_insert_failed', 'Failed to record journal entry lines.', ['status' => 500]);
+            }
         }
 
         return $journal_id;

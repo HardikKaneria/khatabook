@@ -3,6 +3,7 @@
 define('ABSPATH', dirname(__DIR__) . '/');
 define('MINUTE_IN_SECONDS', 60);
 define('HOUR_IN_SECONDS', 3600);
+define('DAY_IN_SECONDS', 86400);
 define('KHATABOOK_PLUGIN_FILE', dirname(__DIR__) . '/main.php');
 
 require __DIR__ . '/TestWpEnvironment.php';
@@ -57,6 +58,13 @@ if (!function_exists('wp_kses_post')) {
     function wp_kses_post($value)
     {
         return (string) $value;
+    }
+}
+
+if (!function_exists('wp_strip_all_tags')) {
+    function wp_strip_all_tags($value)
+    {
+        return trim(strip_tags((string) $value));
     }
 }
 
@@ -119,8 +127,10 @@ require dirname(__DIR__) . '/vendor/autoload.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceTemplateHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceRenderHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceTemplateRenderHelper.php';
+require dirname(__DIR__) . '/backend/Helpers/InvoiceFinancialHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceEditHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/ExpenseEditHelper.php';
+require dirname(__DIR__) . '/backend/Helpers/ReportHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/OrgHelper.php';
 require dirname(__DIR__) . '/backend/Auth/AuthSessionHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/OrgMembershipHelper.php';

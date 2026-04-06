@@ -141,6 +141,37 @@
 	color: var(--kbs-muted);
 }
 
+.kbs-filter-form {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+	gap: 14px;
+	margin-bottom: 20px;
+	padding: 18px;
+	border: 1px solid var(--kbs-border-soft);
+	border-radius: 18px;
+	background: var(--kbs-surface-soft);
+}
+
+.kbs-filter-field {
+	display: grid;
+	gap: 8px;
+}
+
+.kbs-filter-field label {
+	font-size: 11px;
+	font-weight: 700;
+	letter-spacing: 0.08em;
+	text-transform: uppercase;
+	color: var(--kbs-muted);
+}
+
+.kbs-filter-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: 10px;
+}
+
 .kbs-record-list {
 	display: grid;
 	gap: 16px;
@@ -254,6 +285,19 @@
 	box-shadow: none;
 }
 
+.kbs-button--filter.button {
+	border-color: var(--kbs-info);
+	background: var(--kbs-info);
+	color: #ffffff;
+}
+
+.kbs-button--filter.button:hover,
+.kbs-button--filter.button:focus {
+	border-color: #0b5f59;
+	background: #0b5f59;
+	color: #ffffff;
+}
+
 .kbs-button--approve.button {
 	border-color: var(--kbs-success);
 	background: var(--kbs-success);
@@ -278,6 +322,19 @@
 	border-color: var(--kbs-danger);
 	background: var(--kbs-danger-soft);
 	color: var(--kbs-danger);
+}
+
+.kbs-button--secondary.button {
+	border-color: var(--kbs-border);
+	background: #ffffff;
+	color: var(--kbs-text);
+}
+
+.kbs-button--secondary.button:hover,
+.kbs-button--secondary.button:focus {
+	border-color: var(--kbs-text);
+	background: var(--kbs-surface-soft);
+	color: var(--kbs-text);
 }
 
 .kbs-badge {
@@ -432,6 +489,32 @@
 	gap: 12px;
 }
 
+.kbs-pagination {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	justify-content: space-between;
+	gap: 14px;
+	margin-top: 20px;
+	padding-top: 18px;
+	border-top: 1px solid var(--kbs-border-soft);
+}
+
+.kbs-pagination__summary,
+.kbs-pagination__current {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.6;
+	color: var(--kbs-muted);
+}
+
+.kbs-pagination__actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+}
+
 @media (max-width: 960px) {
 	.kbs-admin-hero {
 		grid-template-columns: 1fr;
@@ -462,6 +545,11 @@
 	.kbs-record__top {
 		flex-direction: column;
 		align-items: stretch;
+	}
+
+	.kbs-filter-form,
+	.kbs-pagination {
+		grid-template-columns: 1fr;
 	}
 
 	.kbs-record__actions {

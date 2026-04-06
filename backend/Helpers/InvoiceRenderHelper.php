@@ -1,5 +1,6 @@
 <?php
 
+use KBS\Core\SystemLogger;
 use Mpdf\QrCode\Output\Png as QrPngOutput;
 use Mpdf\QrCode\Output\Svg as QrSvgOutput;
 use Mpdf\QrCode\QrCode;
@@ -185,7 +186,13 @@ if (!function_exists('vy_invoice_qr_data_uri')) {
 
             return null;
         } catch (\Throwable $throwable) {
-            error_log('[Vyavhar Invoice] Failed to generate QR preview: ' . $throwable->getMessage());
+            SystemLogger::log_event(
+                'invoice_qr_preview_failed',
+                'Failed to generate invoice QR preview.',
+                ['error_message' => $throwable->getMessage()],
+                0,
+                'backend/Helpers/InvoiceRenderHelper.php'
+            );
             return null;
         }
     }

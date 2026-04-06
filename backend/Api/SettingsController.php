@@ -1,6 +1,8 @@
 <?php
 namespace KBS\Api;
 
+use KBS\Media\ManagedImageUpload;
+use KBS\Core\SystemLogger;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -64,23 +66,46 @@ class SettingsController
                 ],
             ],
         ]);
+
+        register_rest_route(self::NS, '/settings/company-logo', [
+            [
+                'methods'  => WP_REST_Server::CREATABLE,
+                'callback' => [__CLASS__, 'upload_company_logo'],
+                'permission_callback' => [__CLASS__, 'can_write'],
+                'args' => [
+                    'org_id' => [
+                        'required' => true,
+                        'type'     => 'integer',
+                    ],
+                ],
+            ],
+            [
+                'methods'  => WP_REST_Server::DELETABLE,
+                'callback' => [__CLASS__, 'delete_company_logo'],
+                'permission_callback' => [__CLASS__, 'can_write'],
+                'args' => [
+                    'org_id' => [
+                        'required' => true,
+                        'type'     => 'integer',
+                    ],
+                ],
+            ],
+        ]);
     }
 
     /** ---------- logging helpers ---------- */
 
     private static function log($event, $msg, $context = [])
     {
-        // Use your app logger if available, else PHP error log
-        if (class_exists('\\KBS\\Core\\SystemLogger')) {
-            try {
-                // \KBS\Core\SystemLogger::log($event, $msg, $context);
-                return;
-            } catch (\Throwable $e) {
-                // fall through to error_log
-            }
+        if (class_exists(SystemLogger::class)) {
+            SystemLogger::log_event(
+                'settings_' . sanitize_key((string) $event),
+                (string) $msg,
+                is_array($context) ? $context : [],
+                get_current_user_id(),
+                'backend/Api/SettingsController.php'
+            );
         }
-        $suffix = $context ? ' ' . wp_json_encode($context, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) : '';
-        error_log("[KBS SettingsController] {$event}: {$msg}{$suffix}");
     }
 
     private static function etag_matches_client($etag)
@@ -251,6 +276,94 @@ class SettingsController
         return $is_batch ? self::upsert_batch($req) : self::upsert_single($req);
     }
 
+    public static function upload_company_logo(WP_REST_Request $req)
+    {
+        $org_id = (int) $req->get_param('org_id');
+        if (!$org_id) {
+            return new WP_Error('bad_request', 'org_id is required', ['status' => 400]);
+        }
+
+        $files = $req->get_file_params();
+        $logoFile = $files['logo'] ?? null;
+        $upload = ManagedImageUpload::upload((array) $logoFile, [
+            'meta' => [
+                '_vy_company_logo_org_id' => $org_id,
+                '_vy_company_logo_managed' => 1,
+            ],
+        ]);
+
+        if (is_wp_error($upload)) {
+            return $upload;
+        }
+
+        $current = self::get_category_settings($org_id, 'company');
+        $newLogoUrl = (string) ($upload['url'] ?? '');
+        $nextSettings = $current['settings'];
+        $nextSettings['logo_url'] = $newLogoUrl;
+
+        $saved = self::save_category_settings($org_id, 'company', $nextSettings);
+        if (is_wp_error($saved)) {
+            ManagedImageUpload::deleteByUrl($newLogoUrl, [
+                'org_id' => $org_id,
+                'org_meta_key' => '_vy_company_logo_org_id',
+                'managed_meta_key' => '_vy_company_logo_managed',
+            ]);
+            return $saved;
+        }
+
+        $previousLogoUrl = trim((string) ($current['settings']['logo_url'] ?? ''));
+        if ($previousLogoUrl !== '' && $previousLogoUrl !== $newLogoUrl) {
+            ManagedImageUpload::deleteByUrl($previousLogoUrl, [
+                'org_id' => $org_id,
+                'org_meta_key' => '_vy_company_logo_org_id',
+                'managed_meta_key' => '_vy_company_logo_managed',
+            ]);
+        }
+
+        return new WP_REST_Response([
+            'logo_url' => $newLogoUrl,
+            'settings' => $saved['settings'],
+            'version' => $saved['version'],
+        ], 200);
+    }
+
+    public static function delete_company_logo(WP_REST_Request $req)
+    {
+        $org_id = (int) $req->get_param('org_id');
+        if (!$org_id) {
+            return new WP_Error('bad_request', 'org_id is required', ['status' => 400]);
+        }
+
+        $current = self::get_category_settings($org_id, 'company');
+        $previousLogoUrl = trim((string) ($current['settings']['logo_url'] ?? ''));
+        if ($previousLogoUrl === '') {
+            return new WP_REST_Response([
+                'logo_url' => '',
+                'settings' => $current['settings'],
+                'version' => (int) $current['version'],
+            ], 200);
+        }
+
+        $nextSettings = $current['settings'];
+        $nextSettings['logo_url'] = '';
+        $saved = self::save_category_settings($org_id, 'company', $nextSettings);
+        if (is_wp_error($saved)) {
+            return $saved;
+        }
+
+        ManagedImageUpload::deleteByUrl($previousLogoUrl, [
+            'org_id' => $org_id,
+            'org_meta_key' => '_vy_company_logo_org_id',
+            'managed_meta_key' => '_vy_company_logo_managed',
+        ]);
+
+        return new WP_REST_Response([
+            'logo_url' => '',
+            'settings' => $saved['settings'],
+            'version' => $saved['version'],
+        ], 200);
+    }
+
     private static function upsert_single(WP_REST_Request $req)
     {
         global $wpdb;
@@ -366,6 +479,84 @@ class SettingsController
             ]);
             return new WP_Error('server_error', 'Unexpected error', ['status' => 500]);
         }
+    }
+
+    private static function get_category_settings(int $org_id, string $category): array
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'kbs_settings';
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, settings_json, version
+             FROM {$table}
+             WHERE org_id=%d AND category=%s
+             LIMIT 1",
+            $org_id,
+            $category
+        ), ARRAY_A);
+
+        $settings = [];
+        if (!empty($row['settings_json'])) {
+            $decoded = json_decode((string) $row['settings_json'], true);
+            $settings = is_array($decoded) ? $decoded : [];
+        }
+
+        return [
+            'id' => isset($row['id']) ? (int) $row['id'] : 0,
+            'version' => isset($row['version']) ? (int) $row['version'] : 0,
+            'settings' => $settings,
+        ];
+    }
+
+    private static function save_category_settings(int $org_id, string $category, array $settings): array|WP_Error
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'kbs_settings';
+        $user_id = get_current_user_id();
+        $validation = self::validate_against_schema($category, $settings);
+        if (is_wp_error($validation)) {
+            return $validation;
+        }
+
+        $current = self::get_category_settings($org_id, $category);
+        $version = $current['version'] + 1;
+        $payload = wp_json_encode($settings, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        if ($current['id'] > 0) {
+            $ok = $wpdb->update(
+                $table,
+                [
+                    'settings_json' => $payload,
+                    'version'       => $version,
+                    'updated_by'    => $user_id,
+                    'updated_at'    => current_time('mysql'),
+                ],
+                ['id' => $current['id']],
+                ['%s', '%d', '%d', '%s'],
+                ['%d']
+            );
+        } else {
+            $ok = $wpdb->insert(
+                $table,
+                [
+                    'org_id'        => $org_id,
+                    'category'      => $category,
+                    'settings_json' => $payload,
+                    'version'       => $version,
+                    'updated_by'    => $user_id,
+                    'updated_at'    => current_time('mysql'),
+                ],
+                ['%d', '%s', '%s', '%d', '%d', '%s']
+            );
+        }
+
+        if ($ok === false) {
+            return new WP_Error('db_error', 'Failed to save settings', ['status' => 500]);
+        }
+
+        return [
+            'settings' => $settings,
+            'version' => $version,
+        ];
     }
 
     private static function upsert_batch(WP_REST_Request $req)
@@ -500,6 +691,7 @@ class SettingsController
                 'properties' => [
                     'business_name'    => ['type' => 'string'],
                     'display_name'     => ['type' => 'string'],
+                    'logo_url'         => ['type' => 'string'],
                     'gst_registered'   => ['type' => 'boolean'],
                     'gstin'            => ['type' => 'string'],
                     'state'            => ['type' => 'string'],

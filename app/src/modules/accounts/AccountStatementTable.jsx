@@ -1,4 +1,5 @@
 import { Table } from "antd";
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
 
 const formatCurrency = (value) =>
     Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -11,9 +12,15 @@ const formatDisplayDate = (value) => {
 };
 
 export default function AccountStatementTable({ lines = [], loading, error }) {
-    if (loading) return <p>Loading statement…</p>;
-    if (error) return <p className="text-red-600">{error.message}</p>;
-    if (!lines.length) return <p>No transactions for the selected range.</p>;
+    if (loading) {
+        return <FeedbackState title="Loading statement" description="Fetching transactions for the selected date range." tone="loading" />;
+    }
+    if (error) {
+        return <FeedbackState title="Unable to load statement" description={error.message} tone="error" />;
+    }
+    if (!lines.length) {
+        return <FeedbackState title="No transactions in this range" description="Adjust the date filters to inspect a different ledger period." tone="empty" />;
+    }
 
     const columns = [
         {

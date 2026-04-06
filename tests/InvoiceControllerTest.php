@@ -214,6 +214,42 @@ kbs_test('invoice update replaces invoice items and clears stale pdf references 
     kbs_assert_same('updated', $history[0]['action'] ?? null);
 });
 
+kbs_test('invoice create rolls back partial writes when an invoice item insert fails', function (): void {
+    kbs_test_add_user([
+        'ID' => 305,
+        'user_email' => 'invoice-rollback@example.com',
+        'display_name' => 'Rollback User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(305);
+    kbs_test_set_user_meta(305, 'vy_active_org_id', 35);
+    kbs_test_seed_org_membership(305, 35, 'company_admin', true, 'Rollback Org');
+
+    kbs_test_fail_next_insert($GLOBALS['wpdb']->prefix . 'vy_invoice_items');
+
+    $request = kbs_test_make_request('POST', '/vy/v1/invoices', [], [
+        'invoice_number' => 'INV-ROLLBACK-001',
+        'customer_name' => 'Rollback Customer',
+        'customer_email' => 'rollback@example.com',
+        'date' => '2026-04-03',
+        'status' => 'SENT',
+        'items' => [[
+            'description' => 'Implementation',
+            'quantity' => 1,
+            'unit_price' => 500,
+            'tax_rate' => 0,
+        ]],
+    ]);
+
+    $result = VyRestInvoices::create_invoice($request);
+    kbs_assert_wp_error($result, 'vy_invoice_items_insert_failed', 500);
+
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_contacts'), 'Invoice rollback should remove the transient customer contact.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoices'), 'Invoice rollback should remove the invoice row.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoice_items'), 'Invoice rollback should remove invoice items.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_record_history'), 'Invoice rollback should not leave audit history behind.');
+});
+
 kbs_test('invoice payment writes payment audit history and appears in invoice detail history', function (): void {
     kbs_test_add_user([
         'ID' => 304,
@@ -308,4 +344,85 @@ kbs_test('invoice payment writes payment audit history and appears in invoice de
     kbs_assert_count(1, $paymentsData['data'] ?? [], 'Payments list should expose the recorded payment.');
     kbs_assert_same('INV-PAY-001', $paymentsData['data'][0]['invoice']['invoice_number'] ?? null);
     kbs_assert_same('Bank', $paymentsData['data'][0]['account']['name'] ?? null);
+});
+
+kbs_test('invoice payment rolls back journal writes when payment persistence fails', function (): void {
+    kbs_test_add_user([
+        'ID' => 306,
+        'user_email' => 'payment-rollback@example.com',
+        'display_name' => 'Payment Rollback User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(306);
+    kbs_test_set_user_meta(306, 'vy_active_org_id', 36);
+    kbs_test_seed_org_membership(306, 36, 'company_admin', true, 'Payment Rollback Org');
+
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoices', [[
+        'id' => 8,
+        'org_id' => 36,
+        'contact_id' => null,
+        'invoice_number' => 'INV-ROLLBACK-PAY',
+        'customer_name' => 'Rollback Customer',
+        'customer_email' => 'rollback-pay@example.com',
+        'customer_phone' => '5555555555',
+        'date' => '2026-04-03',
+        'due_date' => '2026-04-10',
+        'currency' => 'INR',
+        'subtotal' => 1200.0,
+        'tax_total' => 0.0,
+        'total' => 1200.0,
+        'status' => 'SENT',
+        'template_id' => 'minimal-clean',
+        'notes' => '',
+        'pdf_url' => null,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [
+        [
+            'id' => 83,
+            'org_id' => 36,
+            'code' => 'BANK-RB',
+            'name' => 'Rollback Bank',
+            'type' => 'ASSET',
+            'sub_type' => 'BANK',
+            'currency' => 'INR',
+            'is_system' => 0,
+            'status' => 'ACTIVE',
+            'opening_balance' => 0,
+            'opening_balance_type' => 'DEBIT',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 84,
+            'org_id' => 36,
+            'code' => 'REV-RB',
+            'name' => 'Rollback Revenue',
+            'type' => 'INCOME',
+            'sub_type' => 'OPERATING',
+            'currency' => 'INR',
+            'is_system' => 0,
+            'status' => 'ACTIVE',
+            'opening_balance' => 0,
+            'opening_balance_type' => 'CREDIT',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+    ]);
+
+    kbs_test_fail_next_insert($GLOBALS['wpdb']->prefix . 'vy_invoice_payments');
+
+    $result = VyRestInvoices::pay_invoice(kbs_test_make_request('POST', '/vy/v1/invoices/8/pay', ['id' => 8], [
+        'amount' => 500,
+        'date' => '2026-04-06',
+        'to_account_id' => 83,
+        'income_account_id' => 84,
+    ]));
+    kbs_assert_wp_error($result, 'vy_payment_insert_failed', 500);
+
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoice_payments'), 'Failed payment writes should not leave payment rows behind.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_entries'), 'Failed payment writes should roll back journal entries.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines'), 'Failed payment writes should roll back journal lines.');
+    kbs_assert_same('SENT', kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoices')[0]['status'] ?? null);
 });

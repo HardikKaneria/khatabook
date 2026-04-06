@@ -14,6 +14,8 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 class PendingUserController {
+    private const DEFAULT_PER_PAGE = 20;
+    private const MAX_PER_PAGE = 50;
 
     private static function get_pending_user(int $pending_id): ?object {
         global $wpdb;
@@ -274,7 +276,17 @@ class PendingUserController {
             ];
         } catch (Exception $e) {
             $wpdb->query('ROLLBACK');
-            error_log('Approval failed: ' . $e->getMessage());
+            SystemLogger::log_event(
+                'pending_user_approval_failed',
+                'Pending user approval failed.',
+                [
+                    'pending_user_id' => $normalized['id'],
+                    'email' => $normalized['email'],
+                    'error_message' => $e->getMessage(),
+                ],
+                get_current_user_id(),
+                'backend/Admin/PendingUserController.php'
+            );
             return new WP_Error('pending_user_approve_failed', 'Approval failed: ' . $e->getMessage(), ['status' => 500]);
         }
     }
@@ -283,8 +295,40 @@ class PendingUserController {
         global $wpdb;
 
         $table_pending = $wpdb->prefix . 'kbs_pending_users';
+        $page = max(1, absint($request->get_param('page') ?: 1));
+        $per_page = absint($request->get_param('per_page') ?: self::DEFAULT_PER_PAGE);
+        $per_page = max(1, min(self::MAX_PER_PAGE, $per_page));
+        $offset = ($page - 1) * $per_page;
+
+        $where_parts = ["status = 'pending'"];
+        $params = [];
+
+        $email = sanitize_email((string) $request->get_param('email'));
+        if ($email !== '') {
+            $where_parts[] = 'email = %s';
+            $params[] = $email;
+        }
+
+        $company = sanitize_text_field((string) $request->get_param('company'));
+        if ($company !== '') {
+            $where_parts[] = 'company LIKE %s';
+            $params[] = '%' . $wpdb->esc_like($company) . '%';
+        }
+
+        $where = ' WHERE ' . implode(' AND ', $where_parts);
+        $count_sql = "SELECT COUNT(*) FROM {$table_pending}{$where}";
+        $total = $params
+            ? (int) $wpdb->get_var($wpdb->prepare($count_sql, ...$params))
+            : (int) $wpdb->get_var($count_sql);
+
         $rows = $wpdb->get_results(
-            "SELECT id, name, email, company, status, applied_at FROM {$table_pending} WHERE status = 'pending' ORDER BY applied_at DESC"
+            $wpdb->prepare(
+                "SELECT id, name, email, company, status, applied_at
+                 FROM {$table_pending}{$where}
+                 ORDER BY applied_at DESC, id DESC
+                 LIMIT %d OFFSET %d",
+                ...array_merge($params, [$per_page, $offset])
+            )
         );
 
         $users = array_map(
@@ -301,10 +345,27 @@ class PendingUserController {
             $rows ?: []
         );
 
-        return new WP_REST_Response([
+        $distinct_companies_sql = "SELECT COUNT(DISTINCT company) FROM {$table_pending}{$where}";
+        $company_count = $params
+            ? (int) $wpdb->get_var($wpdb->prepare($distinct_companies_sql, ...$params))
+            : (int) $wpdb->get_var($distinct_companies_sql);
+
+        $response = new WP_REST_Response([
             'users' => $users,
-            'total' => count($users),
+            'total' => $total,
+            'summary' => [
+                'pending_count' => $total,
+                'company_count' => $company_count,
+                'latest_request' => $users[0]['applied_at'] ?? '',
+            ],
         ], 200);
+
+        $response->header('X-WP-Total', (string) $total);
+        $response->header('X-WP-TotalPages', (string) max(1, (int) ceil($total / max(1, $per_page))));
+        $response->header('X-KBS-Page', (string) $page);
+        $response->header('X-KBS-Per-Page', (string) $per_page);
+
+        return $response;
     }
 
     public static function update_status(WP_REST_Request $request): WP_REST_Response|WP_Error {

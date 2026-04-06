@@ -20,6 +20,7 @@ import { makeDefaultApiFetch } from "../utils/apiClient";
 import PageContainer from "../components/ui/PageContainer.jsx";
 import PageHeader from "../components/ui/PageHeader.jsx";
 import PrimaryButton from "../components/ui/PrimaryButton.jsx";
+import CompanyLogoUploader from "../components/settings/CompanyLogoUploader.jsx";
 
 // ---------------------------------------------------------------------------
 // --------------------------- Defaults --------------------------------------
@@ -165,6 +166,7 @@ export default function SettingsAntD() {
     const [versions, setVersions] = useState({});
     const [savingAll, setSavingAll] = useState(false);
     const [lastError, setLastError] = useState("");
+    const [companyLogoBusy, setCompanyLogoBusy] = useState(false);
 
     const withDefaults = useCallback((cat) => data?.[cat] ?? DEFAULTS[cat], [data]);
 
@@ -318,7 +320,7 @@ export default function SettingsAntD() {
                     title="Company Settings"
                     subtitle="One page. Everything you need. Expand a section, edit, and save independently."
                     actions={
-                        <PrimaryButton onClick={onSaveAll} disabled={!data || loading} style={{ minWidth: 140 }}>
+                        <PrimaryButton onClick={onSaveAll} disabled={!data || loading || companyLogoBusy} style={{ minWidth: 140 }}>
                             {savingAll ? "Saving…" : "Save All"}
                         </PrimaryButton>
                     }
@@ -341,12 +343,17 @@ export default function SettingsAntD() {
                             />
                             {/* Sections */}
                         <CompanySection
+                            orgId={orgId}
+                            apiFetch={apiFetch}
                             loading={loading}
                             value={withDefaults("company")}
                             onChange={(v) => setData((d) => ({ ...d, company: v }))}
                             onSave={() => onSave("company")}
                             saving={!!saving.company}
-                            disabled={!data || loading}
+                            disabled={!data || loading || companyLogoBusy}
+                            onLogoBusyChange={setCompanyLogoBusy}
+                            onError={(text) => message.error(text)}
+                            onSuccess={(text) => message.success(text)}
                         />
                         <SalesSection
                             loading={loading}
@@ -391,7 +398,19 @@ export default function SettingsAntD() {
 }
 
 // --------------------------- Sections ----------------------------------------
-function CompanySection({ value, onChange, onSave, saving, loading, disabled }) {
+function CompanySection({
+    orgId,
+    apiFetch,
+    value,
+    onChange,
+    onSave,
+    saving,
+    loading,
+    disabled,
+    onLogoBusyChange,
+    onError,
+    onSuccess,
+}) {
     const [form] = Form.useForm();
     useEffect(() => {
         if (!loading) form.setFieldsValue(value);
@@ -407,8 +426,24 @@ function CompanySection({ value, onChange, onSave, saving, loading, disabled }) 
             {!loading && (
                 <Form form={form} layout="vertical" onValuesChange={onValuesChange}>
                     <p style={{ marginTop: 0, color: "var(--kb-color-text-secondary)" }}>
-                        These values are used in reports and invoice headers. Invoice template visuals and document branding are managed separately from Invoice Settings.
+                        These values are used in reports and invoice headers. The company logo below is the organization identity logo and the fallback invoice logo when Invoice Settings does not define its own uploaded logo.
                     </p>
+                    <Form.Item label="Company Logo">
+                        <CompanyLogoUploader
+                            apiFetch={apiFetch}
+                            orgId={orgId}
+                            logoUrl={value?.logo_url || ""}
+                            disabled={disabled}
+                            onSettingsChange={(patch) => {
+                                const next = { ...value, ...patch };
+                                onChange(next);
+                                form.setFieldsValue(next);
+                            }}
+                            onBusyChange={onLogoBusyChange}
+                            onError={onError}
+                            onSuccess={onSuccess}
+                        />
+                    </Form.Item>
                     <Row gutter={12}>
                         <Col xs={24} md={12}>
                             <Form.Item label="Business Name" name="business_name" rules={[{ required: true }]}>

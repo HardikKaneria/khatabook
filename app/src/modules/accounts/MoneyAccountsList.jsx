@@ -1,3 +1,5 @@
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+
 const moneyTypes = new Set(["BANK", "CASH", "WALLET"]);
 
 const formatCurrency = (value) => Number(value ?? 0).toLocaleString();
@@ -8,7 +10,7 @@ export default function MoneyAccountsList({ accounts = [], onSelectAccount }) {
     );
 
     if (!moneyAccounts.length) {
-        return <p className="kb-muted">No money accounts yet.</p>;
+        return <FeedbackState title="No money accounts yet" description="Create a bank, cash, or wallet account to post receipts, payments, and transfers." tone="empty" />;
     }
 
     return (

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import InlineNotice from "../../components/ui/InlineNotice.jsx";
 
 const formatAccounts = (accounts = []) =>
     accounts.map((acct) => ({ id: acct.id, name: acct.name }));
@@ -76,7 +77,7 @@ export default function TransferForm({
                 <label className="kb-muted">Description</label>
                 <input className="kb-input" value={form.description} onChange={handleChange("description")} />
             </div>
-            {formError ? <p className="text-red-600 text-sm">{formError}</p> : null}
+            <InlineNotice message={formError} />
             <div className="flex gap-2 justify-end">
                 <button type="button" className="kb-btn kb-btn--ghost" onClick={onCancel}>
                     Cancel

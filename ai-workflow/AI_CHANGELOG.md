@@ -39,6 +39,267 @@ Each entry should include:
 - ...
 ```
 
+## 2026-04-06 - Recurring Billing, Invoice Adjustments, And Promise Tracking
+
+### Summary
+- Completed the next three safe execution tasks in order: recurring billing on live `vy_*` invoices, invoice-linked credit/debit notes, and invoice promise-to-pay tracking.
+- Kept all three features inside the existing invoice architecture by extending `VyRestInvoices.php`, adding narrowly scoped `vy_*` support tables, and reusing existing org, audit, reporting, payment, and invoice-rendering paths instead of building parallel subsystems.
+- Extended the current SPA invoice and payments surfaces so the new capabilities are usable end-to-end without introducing fake screens or route drift.
+
+### Files Changed
+- `backend/Api/VyRestInvoices.php`
+- `backend/Db/TableManager.php`
+- `backend/Helpers/InvoiceFinancialHelper.php`
+- `backend/Helpers/InvoiceEditHelper.php`
+- `backend/Helpers/ReportHelper.php`
+- `backend/Core/Plugin.php`
+- `main.php`
+- `app/src/modules/invoices/api.js`
+- `app/src/modules/invoices/hooks.js`
+- `app/src/modules/invoices/InvoicesPage.jsx`
+- `app/src/modules/invoices/InvoiceList.jsx`
+- `app/src/modules/invoices/InvoiceDetailPage.jsx`
+- `app/src/modules/invoices/InvoiceDetail.jsx`
+- `app/src/modules/invoices/InvoicePaymentForm.jsx`
+- `app/src/modules/invoices/RecurringProfileForm.jsx`
+- `app/src/modules/invoices/RecurringProfilesList.jsx`
+- `app/src/modules/invoices/InvoiceNoteForm.jsx`
+- `app/src/modules/invoices/InvoicePromiseForm.jsx`
+- `app/src/modules/payments/api.js`
+- `app/src/modules/payments/PaymentsPage.jsx`
+- `app/src/modules/contacts/ContactStatementPanel.jsx`
+- `tests/bootstrap.php`
+- `tests/TestWpEnvironment.php`
+- `tests/InvoiceLifecycleExtensionsTest.php`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+- `php -l` passed on:
+  - `backend/Api/VyRestInvoices.php`
+  - `backend/Db/TableManager.php`
+  - `backend/Helpers/InvoiceFinancialHelper.php`
+  - `backend/Helpers/ReportHelper.php`
+  - `backend/Helpers/InvoiceEditHelper.php`
+  - `backend/Core/Plugin.php`
+  - `tests/bootstrap.php`
+  - `tests/TestWpEnvironment.php`
+  - `tests/InvoiceLifecycleExtensionsTest.php`
+- `composer test` in `plugins/khatabook` passed with `36 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+
+### Workflow Updates
+- Marked `P2-05`, `P2-06`, and `P2-07` complete in `AI_FEATURE_BACKLOG.md`.
+- Added the next safe follow-up queue: vendor bills, Home receivables summary alignment, and org member/invite rollback discipline.
+- Updated the master brief and file map so future runs treat recurring billing, invoice adjustments, and promise tracking as part of the active invoice module rather than future roadmap work.
+
+### Remaining Risks / Follow-Up
+- The payables side is still the biggest product gap: vendor bills and later settlement for unpaid expenses are not live yet.
+- `Home.jsx` still relies on the latest-100-open-invoices shortcut until the dashboard is switched to the server-side receivables summary.
+- `OrgUsersController.php` still does not have the same rollback discipline as the core financial controllers.
+
+## 2026-04-06 - Route-Level Loading, Company Logo Handling, And Customer Statements
+
+### Summary
+- Completed the next three safe execution tasks in order: reduced frontend bundle cost with route-level lazy loading and deterministic chunking, added company-logo media handling only for the confirmed live consumer path, and shipped customer statements on live contact/invoice/payment data.
+- Kept the implementation inside the current plugin architecture by preserving the manual router, reusing the existing settings system, extending `ReportHelper.php` rather than inventing a new statement model, and using WordPress media APIs for uploads.
+- Added controller-level automated coverage for the new customer-statement endpoint and adjusted the lightweight test environment to match the active report queries.
+
+### Files Changed
+- `app/src/App.jsx`
+- `app/src/components/ui/RouteLoadingState.jsx`
+- `app/vite.config.js`
+- `app/src/pages/CompanySettings.jsx`
+- `app/src/components/settings/CompanyLogoUploader.jsx`
+- `app/src/modules/contacts/api.js`
+- `app/src/modules/contacts/ContactsList.jsx`
+- `app/src/modules/contacts/ContactsPage.jsx`
+- `app/src/modules/contacts/ContactStatementPanel.jsx`
+- `backend/Api/SettingsController.php`
+- `backend/Api/VyRestContacts.php`
+- `backend/Api/VyRestInvoiceSettings.php`
+- `backend/Endpoint/EndpointManager.php`
+- `backend/Helpers/ReportHelper.php`
+- `backend/Media/ManagedImageUpload.php`
+- `tests/ContactControllerTest.php`
+- `tests/TestWpEnvironment.php`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+- `php -l` passed on:
+  - `backend/Api/SettingsController.php`
+  - `backend/Api/VyRestContacts.php`
+  - `backend/Api/VyRestInvoiceSettings.php`
+  - `backend/Helpers/ReportHelper.php`
+  - `backend/Media/ManagedImageUpload.php`
+  - `backend/Endpoint/EndpointManager.php`
+  - `tests/ContactControllerTest.php`
+- `composer test` in `plugins/khatabook` passed with `33 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+- Verified the frontend production build now emits route/module chunks instead of the previous oversized main-bundle warning
+
+### Workflow Updates
+- Marked `P2-02A`, `P2-03`, and `P2-04` complete.
+- Promoted recurring billing to the next active execution task, followed by credit/debit notes and promise-to-pay tracking.
+- Updated the tech-debt notes to remove the resolved bundle warning and document the still-duplicated settings route registration path.
+- Updated the file map and master brief so future runs can find the new route-loading, company-logo, and customer-statement paths quickly.
+
+### Remaining Risks / Follow-Up
+- Company-logo upload currently exists only on `CompanySettings.jsx`, with invoice settings still taking precedence for document branding. That precedence is correct but should stay explicit in future settings work.
+- Customer statements currently surface as a contacts-modal workflow rather than a printable/export route.
+- `SettingsController.php` still contains an internal route-registration map alongside the active `EndpointManager.php` registration path, which remains an avoidable source of drift for future runs.
+
+## 2026-04-06 - Admin Flow Tightening, Shared Frontend Helpers, And UI Pattern Normalization
+
+### Summary
+- Completed the next three safe execution tasks in order: tightened operational admin flows, extracted shared frontend async/query helpers, and normalized active list/detail/form state treatment across the current live modules.
+- Kept the implementation inside the existing plugin architecture by reusing `PendingUserController`, `AdminData`, existing SPA module boundaries, and shared UI primitives instead of introducing new frameworks or alternate data paths.
+- Updated both wp-admin and the SPA users screen so support-oriented operations are clearer without changing the underlying permission model or org safety rules.
+
+### Files Changed
+
+- `backend/Admin/AdminPage.php`
+- `backend/Admin/PendingUserController.php`
+- `backend/Admin/views/pending-users.php`
+- `backend/Admin/views/registration-logs.php`
+- `backend/Admin/views/system-logs.php`
+- `backend/Admin/views/otp-attempts.php`
+- `assets/css/admin-style.css`
+- `app/src/hooks/useAsyncResource.js`
+- `app/src/utils/buildQuery.js`
+- `app/src/components/ui/FeedbackState.jsx`
+- `app/src/components/ui/InlineNotice.jsx`
+- `app/src/components/ui/RecordHistoryCard.jsx`
+- `app/src/pages/UsersAdmin.jsx`
+- `app/src/modules/accounts/api.js`
+- `app/src/modules/accounts/hooks.js`
+- `app/src/modules/accounts/AccountsPage.jsx`
+- `app/src/modules/accounts/AccountDetailPage.jsx`
+- `app/src/modules/accounts/AccountStatementTable.jsx`
+- `app/src/modules/accounts/MoneyAccountsList.jsx`
+- `app/src/modules/accounts/TransferForm.jsx`
+- `app/src/modules/contacts/api.js`
+- `app/src/modules/contacts/hooks.js`
+- `app/src/modules/contacts/ContactsList.jsx`
+- `app/src/modules/contacts/ContactsPage.jsx`
+- `app/src/modules/expenses/api.js`
+- `app/src/modules/expenses/hooks.js`
+- `app/src/modules/expenses/ExpensesList.jsx`
+- `app/src/modules/expenses/ExpensesPage.jsx`
+- `app/src/modules/expenses/ExpenseDetailPage.jsx`
+- `app/src/modules/invoices/api.js`
+- `app/src/modules/invoices/hooks.js`
+- `app/src/modules/invoices/InvoiceList.jsx`
+- `app/src/modules/invoices/InvoicesPage.jsx`
+- `app/src/modules/invoices/InvoiceDetailPage.jsx`
+- `app/src/modules/payments/api.js`
+- `app/src/modules/payments/PaymentsPage.jsx`
+- `app/src/modules/reports/api.js`
+- `app/src/theme.css`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+
+- `php -l` passed on:
+  - `backend/Admin/AdminPage.php`
+  - `backend/Admin/PendingUserController.php`
+  - `backend/Admin/views/pending-users.php`
+  - `backend/Admin/views/registration-logs.php`
+  - `backend/Admin/views/system-logs.php`
+  - `backend/Admin/views/otp-attempts.php`
+- `composer test` in `plugins/khatabook` passed with `31 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+- Verified there are no remaining duplicated `const useAsync =` or `const buildQuery =` definitions in the active module API/hook files
+
+### Workflow Updates
+
+- Marked `P1-06`, `P2-01`, and `P2-02` complete.
+- Added the large-bundle / route-level loading task as the next structural cleanup item.
+- Moved the next active execution order to bundle splitting, then company media handling for real consumers, then customer statements.
+- Updated the file map and master brief so future runs can find the new shared frontend foundations and the wp-admin support path more quickly.
+
+### Remaining Risks / Follow-Up
+
+- The frontend production build still emits a large main-bundle warning and should be addressed before more heavy operational screens are added.
+- `CompanySettings.jsx`, `Home.jsx`, and `ProfitTaxPage.jsx` still use more bespoke fetch/layout behavior than the now-shared module primitives.
+- Org-user invite/member flows in `backend/Api/OrgUsersController.php` still do not have the same rollback discipline as the core financial controllers.
+
+## 2026-04-06 - Reports Expansion, Operational Logging, And Financial Write Safety
+
+### Summary
+- Completed the next three safe execution tasks in order: expanded reporting on live `vy_*` data, consolidated operational error logging into `kbs_system_logs`, and hardened the main multi-step financial write paths against partial failure.
+- Kept the implementation inside the existing plugin architecture by extending `VyRestReports`, `ReportHelper`, `SystemLogger`, `VyJournalEngine`, and the existing invoice/expense controllers rather than introducing new subsystems.
+- Extended the current PHP harness so the new report endpoints, rollback behavior, and logger path are executable and not just code-reviewed.
+
+### Files Changed
+
+- `app/src/modules/reports/ProfitTaxPage.jsx`
+- `app/src/modules/reports/api.js`
+- `app/src/theme.css`
+- `backend/Accounting/VyJournalEngine.php`
+- `backend/Admin/PendingUserController.php`
+- `backend/Api/SettingsController.php`
+- `backend/Api/VyRestExpenses.php`
+- `backend/Api/VyRestInvoices.php`
+- `backend/Api/VyRestReports.php`
+- `backend/Core/SystemLogger.php`
+- `backend/Email/EmailManager.php`
+- `backend/Helpers/InvoiceRenderHelper.php`
+- `backend/Helpers/ReportHelper.php`
+- `backend/Notifications/InternalDocumentNotifier.php`
+- `tests/bootstrap.php`
+- `tests/TestWpEnvironment.php`
+- `tests/ExpenseControllerTest.php`
+- `tests/InvoiceControllerTest.php`
+- `tests/ReportsControllerTest.php`
+- `tests/SystemLoggerTest.php`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+
+- `php -l` passed on the changed PHP files, including:
+  - `backend/Helpers/ReportHelper.php`
+  - `backend/Api/VyRestReports.php`
+  - `backend/Core/SystemLogger.php`
+  - `backend/Api/VyRestInvoices.php`
+  - `backend/Api/VyRestExpenses.php`
+  - `backend/Accounting/VyJournalEngine.php`
+- `composer test` in `plugins/khatabook` passed with `31 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+
+### Workflow Updates
+
+- Marked report expansion complete and moved the new report surfaces into the active baseline.
+- Marked operational logging consolidation complete and narrowed remaining raw-log debt to frontend boot and logger fallback paths.
+- Marked the highest-risk financial write-safety task complete and narrowed remaining write-safety debt to non-financial org/admin flows.
+- Promoted operational admin flows to the next active execution task.
+
+### Remaining Risks / Follow-Up
+
+- `Home.jsx` still computes receivables from the latest 100 `SENT` and `PARTIAL` invoices instead of reusing the new server-side receivables summary.
+- The current expense module still does not include a later settlement flow for unpaid expenses.
+- Non-financial org/admin multi-step flows in `OrgUsersController.php` still do not have the same rollback discipline as the core invoice/expense/payment paths.
+- The frontend build still emits a large-bundle warning and should be handled as a later performance task, not mixed into operational work.
+
 ## 2026-04-03 - Settings Truthfulness, Record History, And Payments Visibility
 
 ### Summary

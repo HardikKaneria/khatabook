@@ -23,6 +23,50 @@ kbs_test('expense create rejects requests without a category and positive amount
     kbs_assert_wp_error($result, 'vy_bad_expense', 400);
 });
 
+kbs_test('vendor bill create requires a due date and persists bill metadata on the live expense model', function (): void {
+    kbs_test_add_user([
+        'ID' => 407,
+        'user_email' => 'bills@example.com',
+        'display_name' => 'Bills User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(407);
+    kbs_test_set_user_meta(407, 'vy_active_org_id', 47);
+    kbs_test_seed_org_membership(407, 47, 'company_admin', true, 'Bills Org');
+
+    $missingDue = VyRestExpenses::create_expense(kbs_test_make_request('POST', '/vy/v1/expenses', [], [
+        'document_type' => 'BILL',
+        'expense_date' => '2026-04-03',
+        'category' => 'Raw Materials',
+        'payee' => 'Supply Vendor',
+        'amount' => 4500,
+        'currency' => 'INR',
+    ]));
+    kbs_assert_wp_error($missingDue, 'vy_bill_due_required', 400);
+
+    $result = VyRestExpenses::create_expense(kbs_test_make_request('POST', '/vy/v1/expenses', [], [
+        'document_type' => 'BILL',
+        'expense_date' => '2026-04-03',
+        'due_date' => '2026-04-20',
+        'reference_number' => 'BILL-447',
+        'category' => 'Raw Materials',
+        'payee' => 'Supply Vendor',
+        'amount' => 4500,
+        'currency' => 'INR',
+        'description' => 'April stock purchase',
+    ]));
+    $response = kbs_assert_response($result, 201);
+    $data = $response->get_data();
+
+    kbs_assert_same('BILL', $data['document_type'] ?? null);
+
+    $expense = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_expenses')[0];
+    kbs_assert_same('BILL', $expense['document_type'] ?? null);
+    kbs_assert_same('2026-04-20', $expense['due_date'] ?? null);
+    kbs_assert_same('BILL-447', $expense['reference_number'] ?? null);
+    kbs_assert_true((int) ($expense['expense_account_id'] ?? 0) > 0, 'Vendor bill creation should store the resolved expense account for later settlement work.');
+});
+
 kbs_test('expense create persists the expense, vendor contact, and default expense account when needed', function (): void {
     kbs_test_add_user([
         'ID' => 402,
@@ -74,6 +118,55 @@ kbs_test('expense create persists the expense, vendor contact, and default expen
     $account = $accounts[0];
     kbs_assert_same('GENERAL_EXPENSES', $account['code'] ?? null);
     kbs_assert_same('EXPENSE', $account['type'] ?? null);
+});
+
+kbs_test('expense create rolls back contact, account, expense, and journal rows when journal posting fails', function (): void {
+    kbs_test_add_user([
+        'ID' => 406,
+        'user_email' => 'expense-rollback@example.com',
+        'display_name' => 'Expense Rollback User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(406);
+    kbs_test_set_user_meta(406, 'vy_active_org_id', 46);
+    kbs_test_seed_org_membership(406, 46, 'company_admin', true, 'Expense Rollback Org');
+
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [[
+        'id' => 90,
+        'org_id' => 46,
+        'code' => 'BANK-ROLLBACK',
+        'name' => 'Rollback Bank',
+        'type' => 'ASSET',
+        'sub_type' => 'BANK',
+        'currency' => 'INR',
+        'is_system' => 0,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+
+    kbs_test_fail_next_insert($GLOBALS['wpdb']->prefix . 'vy_journal_lines');
+
+    $result = VyRestExpenses::create_expense(kbs_test_make_request('POST', '/vy/v1/expenses', [], [
+        'expense_date' => '2026-04-03',
+        'category' => 'Travel',
+        'payee' => 'Rollback Vendor',
+        'amount' => 2500,
+        'currency' => 'INR',
+        'pay_from_account_id' => 90,
+        'description' => 'Taxi and hotel',
+    ]));
+
+    kbs_assert_wp_error($result, 'vy_journal_line_insert_failed', 500);
+
+    kbs_assert_count(1, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_accounts'), 'Expense rollback should keep only the pre-existing bank account.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_contacts'), 'Expense rollback should remove the transient vendor contact.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_expenses'), 'Expense rollback should remove the expense row.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_entries'), 'Expense rollback should remove failed journal entries.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines'), 'Expense rollback should remove failed journal lines.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_record_history'), 'Expense rollback should not leave audit history behind.');
 });
 
 kbs_test('expense update blocks expenses that already have recorded payment journals', function (): void {
@@ -193,6 +286,78 @@ kbs_test('expense update persists edited fields for unpaid active expenses', fun
     kbs_assert_same(2000.0, (float) ($expense['amount'] ?? 0));
     kbs_assert_same(240.0, (float) ($expense['gst_amount'] ?? 0));
     kbs_assert_count(1, $history, 'Expense updates should write an audit history row.');
+});
+
+kbs_test('vendor bill update keeps bill due tracking and workflow state visible in the detail payload', function (): void {
+    kbs_test_add_user([
+        'ID' => 408,
+        'user_email' => 'bill-edit@example.com',
+        'display_name' => 'Bill Editor',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(408);
+    kbs_test_set_user_meta(408, 'vy_active_org_id', 48);
+    kbs_test_seed_org_membership(408, 48, 'company_admin', true, 'Bill Edit Org');
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_contacts', [[
+        'id' => 17,
+        'org_id' => 48,
+        'type' => 'VENDOR',
+        'name' => 'Bill Vendor',
+        'email' => 'vendor@example.com',
+        'phone' => '9999998888',
+        'gstin' => '',
+        'billing_address' => '',
+        'shipping_address' => '',
+        'notes' => '',
+        'status' => 'ACTIVE',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_expenses', [[
+        'id' => 5,
+        'org_id' => 48,
+        'contact_id' => 17,
+        'expense_account_id' => 77,
+        'document_type' => 'BILL',
+        'expense_date' => '2026-04-03',
+        'due_date' => '2026-04-10',
+        'category' => 'Packaging',
+        'reference_number' => 'BILL-001',
+        'payee' => 'Bill Vendor',
+        'description' => 'Boxes',
+        'amount' => 2200.0,
+        'currency' => 'INR',
+        'gst_rate' => 12.0,
+        'gst_amount' => 264.0,
+        'gst_type' => 'GST',
+        'is_gst_input_eligible' => 1,
+        'status' => 'POSTED',
+        'payment_journal_id' => null,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+
+    $result = VyRestExpenses::update_expense(kbs_test_make_request('PUT', '/vy/v1/expenses/5', ['id' => 5], [
+        'document_type' => 'BILL',
+        'contact_id' => 17,
+        'expense_date' => '2026-04-04',
+        'due_date' => '2026-04-18',
+        'category' => 'Packaging',
+        'reference_number' => 'BILL-002',
+        'payee' => 'Bill Vendor',
+        'description' => 'Updated boxes',
+        'amount' => 2500.0,
+        'currency' => 'INR',
+    ]));
+    $response = kbs_assert_response($result, 200);
+    $data = $response->get_data();
+
+    kbs_assert_same('BILL', $data['document_type'] ?? null);
+    kbs_assert_same('BILL-002', $data['reference_number'] ?? null);
+    kbs_assert_same('2026-04-18', $data['due_date'] ?? null);
+    kbs_assert_same('OPEN', $data['workflow_status'] ?? null);
+    kbs_assert_same('UNPAID', $data['payment_state'] ?? null);
+    kbs_assert_same(false, $data['is_overdue'] ?? true);
 });
 
 kbs_test('expense archive marks unpaid expenses as archived and blocks journalized expenses', function (): void {

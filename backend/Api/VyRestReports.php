@@ -30,6 +30,18 @@ class VyRestReports
             'callback'            => [__CLASS__, 'tax_estimate'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
+
+        register_rest_route(VyRestAccounts::NS, '/reports/receivables-summary', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'receivables_summary'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/reports/monthly-trends', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'monthly_trends'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
     }
 
     public static function profit_summary(WP_REST_Request $request)
@@ -89,5 +101,31 @@ class VyRestReports
             'income_tax_rate'        => $estimate['income_tax_rate'],
             'estimated_income_tax'   => $estimate['estimated_income_tax'],
         ], 200);
+    }
+
+    public static function receivables_summary(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        [$from, $to] = vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
+        $summary = vy_get_receivables_summary((int) $org, $from, $to, $request->get_param('as_of'));
+
+        return new WP_REST_Response($summary, 200);
+    }
+
+    public static function monthly_trends(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        [$from, $to] = vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
+        $summary = vy_get_monthly_document_trends((int) $org, $from, $to);
+
+        return new WP_REST_Response($summary, 200);
     }
 }

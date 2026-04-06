@@ -1,17 +1,7 @@
 import apiClient from "../../lib/apiClient";
+import buildQuery from "../../utils/buildQuery";
 
 const BASE = "/vy/v1/contacts";
-
-const buildQuery = (params = {}) => {
-    const search = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-        if (value !== undefined && value !== null && value !== "") {
-            search.append(key, value);
-        }
-    });
-    const qs = search.toString();
-    return qs ? `?${qs}` : "";
-};
 
 export async function listContacts({ type, q, page = 1, perPage = 10, status } = {}) {
     return apiClient.get(
@@ -41,4 +31,8 @@ export async function updateContact(id, payload) {
 
 export async function archiveContact(id) {
     return apiClient.post(`${BASE}/${id}/archive`, {});
+}
+
+export async function getContactStatement(id, params = {}) {
+    return apiClient.get(`${BASE}/${id}/statement${buildQuery(params)}`);
 }

@@ -135,6 +135,25 @@ class EndpointManager
             ],
         ]);
 
+        register_rest_route(self::NS, '/settings/company-logo', [
+            [
+                'methods'             => WP_REST_Server::CREATABLE,
+                'callback'            => [SettingsController::class, 'upload_company_logo'],
+                'permission_callback' => [__CLASS__, 'can_write'],
+                'args'                => [
+                    'org_id' => ['type' => 'integer', 'required' => true, 'sanitize_callback' => 'absint'],
+                ],
+            ],
+            [
+                'methods'             => WP_REST_Server::DELETABLE,
+                'callback'            => [SettingsController::class, 'delete_company_logo'],
+                'permission_callback' => [__CLASS__, 'can_write'],
+                'args'                => [
+                    'org_id' => ['type' => 'integer', 'required' => true, 'sanitize_callback' => 'absint'],
+                ],
+            ],
+        ]);
+
         /* ---------------- Read-only logs (admin) ---------------- */
         register_rest_route(self::NS, '/registration-logs', [
             'methods'             => WP_REST_Server::READABLE,

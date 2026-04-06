@@ -2,6 +2,8 @@
 
 namespace KBS\Email;
 
+use KBS\Core\SystemLogger;
+
 defined('ABSPATH') || exit;
 
 class EmailManager
@@ -38,7 +40,13 @@ class EmailManager
     {
         $config = self::get_mailer_config();
         if (!$config) {
-            error_log('[Vyavhar Email] SMTP configuration not found. Save SMTP settings in Vyavhar Admin > SMTP Settings, or define KBS_SMTP_HOST, KBS_SMTP_PORT, KBS_SMTP_USER, and KBS_SMTP_PASS via environment variables or constants. Falling back to default wp_mail transport.');
+            SystemLogger::log_event(
+                'email_smtp_missing_config',
+                'SMTP configuration not found. Falling back to default wp_mail transport.',
+                ['source' => 'wp_mail'],
+                0,
+                'backend/Email/EmailManager.php'
+            );
             return;
         }
 
@@ -113,18 +121,33 @@ class EmailManager
         $headers[] = 'Content-Type: text/html; charset=UTF-8';
         $sent = wp_mail($to, $subject, $html, $headers);
         if (!$sent) {
-            error_log(sprintf('[Vyavhar Email] wp_mail returned false. To: %s Subject: %s', $to, $subject));
+            SystemLogger::log_event(
+                'email_wp_mail_returned_false',
+                'wp_mail returned false while sending a transactional email.',
+                [
+                    'subject_length' => strlen((string) $subject),
+                    'has_custom_headers' => !empty($headers),
+                ],
+                0,
+                'backend/Email/EmailManager.php'
+            );
         }
         return $sent;
     }
 
     public static function handle_mail_failure(\WP_Error $wp_error): void
     {
-        error_log('[Vyavhar Email] wp_mail_failed: ' . $wp_error->get_error_message());
-        $data = $wp_error->get_error_data();
-        if ($data) {
-            error_log('[Vyavhar Email] Failure data: ' . wp_json_encode($data));
-        }
+        SystemLogger::log_event(
+            'email_wp_mail_failed',
+            'wp_mail_failed fired for a transactional email.',
+            [
+                'error_code' => $wp_error->get_error_code(),
+                'error_message' => $wp_error->get_error_message(),
+                'has_data' => (bool) $wp_error->get_error_data(),
+            ],
+            0,
+            'backend/Email/EmailManager.php'
+        );
     }
 
     public static function get_config_diagnostics(): array

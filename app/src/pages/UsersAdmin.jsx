@@ -7,13 +7,14 @@ import {
 	Select,
 	Button,
 	Table,
-	Tag,
 	Popconfirm,
 } from "antd";
 import { MailOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
 import { getAuth } from "../utils/authStorage";
 import { useToast } from "../components/ToastProvider";
 import { makeDefaultApiFetch } from "../utils/apiClient";
+import Card from "../components/ui/Card.jsx";
+import FeedbackState from "../components/ui/FeedbackState.jsx";
 import PageContainer from "../components/ui/PageContainer.jsx";
 import PageHeader from "../components/ui/PageHeader.jsx";
 
@@ -28,11 +29,6 @@ const ROLE_LABELS = {
 	c_manager: "Manager",
 	c_employee: "Employee",
 	administrator: "Administrator",
-};
-
-const STATUS_COLORS = {
-	active: "green",
-	invited: "geekblue",
 };
 
 const ROLE_SET = new Set(ROLE_OPTIONS.map((opt) => opt.value));
@@ -66,6 +62,21 @@ const getCurrentOrgRole = (auth, orgId) => {
 	return normalizeRole(user?.role || "");
 };
 
+const formatInviteDate = (value) => {
+	if (!value) return "—";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) {
+		return value;
+	}
+	return new Intl.DateTimeFormat(undefined, {
+		year: "numeric",
+		month: "short",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+	}).format(date);
+};
+
 export default function UsersAdmin() {
 	const [form] = Form.useForm();
 	const message = useToast();
@@ -86,7 +97,6 @@ export default function UsersAdmin() {
 				setAuth(raw || {});
 			} catch (e) {
 				if (!alive) return;
-				console.error("[UsersAdmin] Failed to load auth", e);
 				message.error("Failed to load auth details");
 				setAuth({});
 			} finally {
@@ -150,7 +160,6 @@ export default function UsersAdmin() {
 				Array.isArray(data?.users) ? data.users : Array.isArray(data) ? data : []
 			);
 		} catch (e) {
-			console.error("[UsersAdmin] fetchUsers failed", e);
 			message.error(e.message || "Failed to load users");
 		} finally {
 			setLoading(false);
@@ -312,15 +321,6 @@ export default function UsersAdmin() {
 				},
 			},
 			{
-				title: "Status",
-				dataIndex: "status",
-				key: "status",
-				render: (status) => {
-					const color = STATUS_COLORS[status] || "default";
-					return <Tag color={color}>{(status || "active").toUpperCase()}</Tag>;
-				},
-			},
-			{
 				title: "Actions",
 				key: "actions",
 				render: (_, record) => {
@@ -368,15 +368,83 @@ export default function UsersAdmin() {
 		]
 	);
 
-	const renderInviteCard = () => (
-		<section className="ui-card">
-			<div className="ui-card-header">
-				<div>
-					<h3>Invite a user</h3>
-					<p>Send an invitation to join your organization.</p>
-				</div>
-			</div>
+	const activeUsers = useMemo(
+		() => users.filter((user) => user.status !== "invited"),
+		[users]
+	);
 
+	const invitedUsers = useMemo(
+		() => users.filter((user) => user.status === "invited"),
+		[users]
+	);
+
+	const inviteActionColumn = useMemo(
+		() => columns.find((column) => column.key === "actions") || null,
+		[columns]
+	);
+
+	const inviteColumns = useMemo(
+		() => [
+			{
+				title: "Email",
+				dataIndex: "email",
+				key: "email",
+				render: (value) => (
+					<a href={`mailto:${value}`}>
+						<MailOutlined /> {value}
+					</a>
+				),
+			},
+			{
+				title: "Role",
+				dataIndex: "role",
+				key: "role",
+				render: (role) => ROLE_LABELS[normalizeRole(role)] || role || "-",
+			},
+			{
+				title: "Invited",
+				dataIndex: "created_at",
+				key: "created_at",
+				render: (value) => formatInviteDate(value),
+			},
+			{
+				title: "Actions",
+				key: "actions",
+				render: (_, record) => inviteActionColumn?.render?.(_, record) ?? null,
+			},
+		],
+		[inviteActionColumn]
+	);
+
+	const summaryCards = useMemo(
+		() => [
+			{
+				label: "Active members",
+				value: activeUsers.length,
+				helper: "Current org membership rows",
+			},
+			{
+				label: "Pending invites",
+				value: invitedUsers.length,
+				helper: "Sent but not accepted yet",
+			},
+			{
+				label: "You can assign",
+				value:
+					manageableRoles.length > 0
+						? manageableRoles.map((role) => ROLE_LABELS[role] || role).join(", ")
+						: "No org roles",
+				helper: "Based on your org-scoped role",
+			},
+		],
+		[activeUsers.length, invitedUsers.length, manageableRoles]
+	);
+
+	const renderInviteCard = () => (
+		<Card
+			title="Invite a user"
+			subtitle="Send an invitation to join your organization. New invites stay separate from active members until accepted."
+		>
 			<Form form={form} layout="inline" onFinish={handleInvite} requiredMark={false}>
 				<Form.Item
 					name="email"
@@ -410,25 +478,60 @@ export default function UsersAdmin() {
 					</Button>
 				</Form.Item>
 			</Form>
+			<p className="ui-inline-note">
+				You are currently operating as {ROLE_LABELS[currentRole] || currentRole || "User"}.
+			</p>
+		</Card>
+	);
+
+	const renderSummary = () => (
+		<section className="ui-stat-grid">
+			{summaryCards.map((card) => (
+				<article key={card.label} className="ui-stat-card">
+					<span className="ui-stat-card__label">{card.label}</span>
+					<strong className="ui-stat-card__value">{card.value}</strong>
+					<p className="ui-stat-card__helper">{card.helper}</p>
+				</article>
+			))}
 		</section>
 	);
 
-	const renderUsersTable = () => (
-		<section className="ui-card">
-			<div className="ui-card-header">
-				<div>
-					<h3>Organization Users</h3>
-					<p>Manage members and their roles.</p>
-				</div>
-			</div>
+	const renderMembersTable = () => (
+		<Card
+			title="Active members"
+			subtitle="Update org roles here. Invite records are listed separately so operational actions stay clearer."
+			actions={<span className="ui-card-meta">{activeUsers.length} members</span>}
+		>
 			<Table
 				rowKey="id"
 				loading={loading}
-				dataSource={users}
+				dataSource={activeUsers}
 				columns={columns}
 				pagination={{ pageSize: 10 }}
+				locale={{
+					emptyText: "No active members found for this organization.",
+				}}
 			/>
-		</section>
+		</Card>
+	);
+
+	const renderInvitesTable = () => (
+		<Card
+			title="Pending invites"
+			subtitle="Resend or remove invites that have not been accepted yet."
+			actions={<span className="ui-card-meta">{invitedUsers.length} invites</span>}
+		>
+			<Table
+				rowKey="id"
+				loading={loading}
+				dataSource={invitedUsers}
+				columns={inviteColumns}
+				pagination={{ pageSize: 10 }}
+				locale={{
+					emptyText: "No pending invites for this organization.",
+				}}
+			/>
+		</Card>
 	);
 
 	const pageShell = (children) => (
@@ -443,21 +546,35 @@ export default function UsersAdmin() {
 	);
 
 	if (authLoading) {
-		return pageShell(<section className="ui-card"><p>Loading your organization data…</p></section>);
+		return pageShell(
+			<Card>
+				<FeedbackState
+					title="Loading organization data"
+					description="Fetching your current org membership and invite permissions."
+					tone="loading"
+				/>
+			</Card>
+		);
 	}
 
 	if (!canViewUsers) {
 		return pageShell(
-			<section className="ui-card">
-				<p>You do not have permission to manage organization members.</p>
-			</section>
+			<Card>
+				<FeedbackState
+					title="You cannot manage organization members"
+					description="Only company admins and managers can access this screen for the current organization."
+					tone="empty"
+				/>
+			</Card>
 		);
 	}
 
 	return pageShell(
 		<>
+			{renderSummary()}
 			{renderInviteCard()}
-			{renderUsersTable()}
+			{renderMembersTable()}
+			{renderInvitesTable()}
 		</>
 	);
 }

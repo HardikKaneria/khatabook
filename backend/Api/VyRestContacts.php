@@ -42,6 +42,12 @@ class VyRestContacts
             'callback'            => [__CLASS__, 'archive_contact'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
+
+        register_rest_route(VyRestAccounts::NS, '/contacts/(?P<id>\d+)/statement', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'get_statement'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
     }
 
     public static function list_contacts(WP_REST_Request $request)
@@ -204,6 +210,30 @@ class VyRestContacts
         );
 
         return new WP_REST_Response(['success' => true], 200);
+    }
+
+    public static function get_statement(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $contactId = (int) $request['id'];
+        $contact = self::fetch_contact((int) $org, $contactId);
+        if (!$contact) {
+            return new WP_Error('vy_not_found', 'Contact not found.', ['status' => 404]);
+        }
+
+        $type = strtoupper((string) ($contact['type'] ?? 'CUSTOMER'));
+        if (!in_array($type, ['CUSTOMER', 'BOTH'], true)) {
+            return new WP_Error('vy_contact_not_customer', 'Statements are only available for customer contacts.', ['status' => 400]);
+        }
+
+        [$from, $to] = \vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
+        $statement = \vy_get_customer_statement((int) $org, $contactId, $from, $to, $contact);
+
+        return new WP_REST_Response($statement, 200);
     }
 
     private static function get_contact_response(int $org_id, int $contact_id): WP_REST_Response|WP_Error

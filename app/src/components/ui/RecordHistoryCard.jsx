@@ -1,9 +1,9 @@
+import Card from "./Card.jsx";
+import FeedbackState from "./FeedbackState.jsx";
+
 export default function RecordHistoryCard({ title = "Activity History", entries = [] }) {
     return (
-        <section className="kb-card" style={{ padding: 24 }}>
-            <h3 className="kb-h3" style={{ marginBottom: 12 }}>
-                {title}
-            </h3>
+        <Card title={title}>
             {entries.length ? (
                 <div className="space-y-4">
                     {entries.map((entry) => (
@@ -31,8 +31,12 @@ export default function RecordHistoryCard({ title = "Activity History", entries 
                     ))}
                 </div>
             ) : (
-                <p>No activity recorded yet.</p>
+                <FeedbackState
+                    title="No activity recorded yet"
+                    description="Record history entries will appear here after changes are posted to this record."
+                    tone="empty"
+                />
             )}
-        </section>
+        </Card>
     );
 }

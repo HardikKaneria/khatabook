@@ -1,12 +1,34 @@
 <?php
 
 use KBS\Admin\AdminPage;
+use KBS\Api\AdminData;
 
 if (!defined('ABSPATH')) exit;
 
-global $wpdb;
-$table = $wpdb->prefix . 'kbs_otp_attempts';
-$attempts = $wpdb->get_results("SELECT * FROM {$table} ORDER BY id DESC LIMIT 100");
+$page = AdminPage::request_int('paged', 1, 1);
+$per_page = AdminPage::request_int('per_page', 25, 1, 100);
+$email = AdminPage::request_email('email');
+$status_filter = AdminPage::request_key('status');
+$context_filter = AdminPage::request_key('context');
+
+$request = new \WP_REST_Request('GET');
+$request->set_param('page', $page);
+$request->set_param('per_page', $per_page);
+if ($email !== '') {
+	$request->set_param('email', $email);
+}
+if ($status_filter !== '') {
+	$request->set_param('status', $status_filter);
+}
+if ($context_filter !== '') {
+	$request->set_param('context', $context_filter);
+}
+
+$response = AdminData::get_otp_attempts($request);
+$attempts = $response->get_data();
+$headers = $response->get_headers();
+$total = (int) ($headers['X-WP-Total'] ?? count($attempts));
+$has_filters = $email !== '' || $status_filter !== '' || $context_filter !== '';
 
 $status_counts = [
 	'sent' => 0,
@@ -28,19 +50,19 @@ AdminPage::render_page_start(
 	'Keep authentication activity readable with stacked cards that can absorb more metadata as security workflows expand.',
 	[
 		[
-			'label'  => 'Entries shown',
-			'value'  => number_format_i18n(count($attempts)),
-			'helper' => 'Latest 100 records',
+			'label'  => 'Entries matched',
+			'value'  => number_format_i18n($total),
+			'helper' => 'Current filtered result size',
 		],
 		[
 			'label'  => 'Verified',
 			'value'  => number_format_i18n($status_counts['verified']),
-			'helper' => 'Successful OTP validations',
+			'helper' => 'Current page only',
 		],
 		[
 			'label'  => 'Failed',
 			'value'  => number_format_i18n($status_counts['failed']),
-			'helper' => 'Attempts that did not verify',
+			'helper' => 'Current page only',
 		],
 		[
 			'label'  => 'Latest attempt',
@@ -49,7 +71,7 @@ AdminPage::render_page_start(
 		],
 	],
 	[
-		'note' => 'Showing the latest 100 records to keep the page responsive while your auth activity grows.',
+		'note' => 'OTP codes remain redacted in admin, even when support filters down to a single user or flow.',
 	]
 );
 ?>
@@ -58,13 +80,59 @@ AdminPage::render_page_start(
 	<div class="kbs-panel__header">
 		<div>
 			<h2 class="kbs-panel__title">Recent Authentication Attempts</h2>
-			<p class="kbs-panel__description">Status, context, and delivery metadata stay readable without table columns.</p>
+			<p class="kbs-panel__description">Filter by exact email, OTP status, or auth context while keeping the sensitive code value redacted.</p>
 		</div>
-		<?php echo AdminPage::badge('Latest 100', 'info'); ?>
+		<?php echo AdminPage::badge($has_filters ? 'Filtered results' : 'Operational log', 'info'); ?>
 	</div>
 
+	<?php
+	AdminPage::render_filter_form([
+		[
+			'name' => 'email',
+			'label' => 'Email',
+			'type' => 'email',
+			'value' => $email,
+			'placeholder' => 'name@company.com',
+		],
+		[
+			'name' => 'status',
+			'label' => 'Status',
+			'type' => 'select',
+			'value' => $status_filter,
+			'options' => [
+				'' => 'All statuses',
+				'sent' => 'Sent',
+				'verified' => 'Verified',
+				'failed' => 'Failed',
+			],
+		],
+		[
+			'name' => 'context',
+			'label' => 'Context',
+			'type' => 'select',
+			'value' => $context_filter,
+			'options' => [
+				'' => 'All contexts',
+				'login' => 'Login',
+				'register' => 'Registration',
+			],
+		],
+		[
+			'name' => 'per_page',
+			'label' => 'Rows per page',
+			'type' => 'select',
+			'value' => (string) $per_page,
+			'options' => [
+				'25' => '25',
+				'50' => '50',
+				'100' => '100',
+			],
+		],
+	]);
+	?>
+
 	<?php if (empty($attempts)) : ?>
-		<?php AdminPage::render_empty_state('No OTP attempts', 'OTP send and verify events will appear here once authentication requests start coming in.'); ?>
+		<?php AdminPage::render_empty_state($has_filters ? 'No matching OTP attempts' : 'No OTP attempts', $has_filters ? 'No OTP attempts match the current filters. Reset the filters to inspect broader auth activity.' : 'OTP send and verify events will appear here once authentication requests start coming in.'); ?>
 	<?php else : ?>
 		<div class="kbs-record-list">
 			<?php foreach ($attempts as $row) : ?>
@@ -112,6 +180,7 @@ AdminPage::render_page_start(
 				</article>
 			<?php endforeach; ?>
 		</div>
+		<?php AdminPage::render_pagination($page, $per_page, $total); ?>
 	<?php endif; ?>
 </section>
 

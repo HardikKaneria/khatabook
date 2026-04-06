@@ -5,7 +5,7 @@ defined('ABSPATH') || exit;
 
 class TableManager
 {
-    private const SCHEMA_VERSION = 6;
+    private const SCHEMA_VERSION = 8;
 
     public static function maybe_upgrade(): void
     {
@@ -386,8 +386,12 @@ class TableManager
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
             contact_id BIGINT UNSIGNED NULL,
+            expense_account_id BIGINT UNSIGNED NULL,
+            document_type VARCHAR(20) NOT NULL DEFAULT 'EXPENSE',
             expense_date DATE NOT NULL,
+            due_date DATE NULL,
             category VARCHAR(100) NOT NULL,
+            reference_number VARCHAR(100) NULL,
             payee VARCHAR(191) NULL,
             description LONGTEXT NULL,
             amount DECIMAL(18,2) NOT NULL,
@@ -399,7 +403,9 @@ class TableManager
             PRIMARY KEY (id),
             KEY idx_org (org_id),
             KEY idx_date (expense_date),
-            KEY idx_category (category)
+            KEY idx_due_date (due_date),
+            KEY idx_category (category),
+            KEY idx_document_type (document_type)
         ) {$charset};";
 
         /* 22) Vy Journal Entries */
@@ -457,6 +463,94 @@ class TableManager
             UNIQUE KEY uniq_org (org_id)
         ) {$charset};";
 
+        /* 25) Recurring Invoice Profiles */
+        $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_recurring_profiles (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            org_id BIGINT UNSIGNED NOT NULL,
+            source_invoice_id BIGINT UNSIGNED NULL,
+            contact_id BIGINT UNSIGNED NULL,
+            profile_name VARCHAR(191) NOT NULL,
+            customer_name VARCHAR(191) NULL,
+            customer_email VARCHAR(191) NULL,
+            customer_phone VARCHAR(50) NULL,
+            start_date DATE NOT NULL,
+            end_date DATE NULL,
+            frequency VARCHAR(20) NOT NULL DEFAULT 'MONTHLY',
+            interval_count INT UNSIGNED NOT NULL DEFAULT 1,
+            due_days INT UNSIGNED NOT NULL DEFAULT 7,
+            currency VARCHAR(10) NOT NULL DEFAULT 'INR',
+            invoice_status VARCHAR(20) NOT NULL DEFAULT 'DRAFT',
+            notes LONGTEXT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+            next_run_date DATE NULL,
+            last_run_date DATE NULL,
+            last_invoice_id BIGINT UNSIGNED NULL,
+            generated_count INT UNSIGNED NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_org_status (org_id, status),
+            KEY idx_org_next_run (org_id, next_run_date),
+            KEY idx_org_source_invoice (org_id, source_invoice_id)
+        ) {$charset};";
+
+        /* 26) Recurring Invoice Profile Items */
+        $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_recurring_items (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            org_id BIGINT UNSIGNED NOT NULL,
+            profile_id BIGINT UNSIGNED NOT NULL,
+            description TEXT NULL,
+            quantity DECIMAL(18,4) NOT NULL DEFAULT 0,
+            unit_price DECIMAL(18,4) NOT NULL DEFAULT 0,
+            tax_rate DECIMAL(6,2) NOT NULL DEFAULT 0,
+            tax_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+            tax_type VARCHAR(32) NULL DEFAULT 'GST',
+            line_total DECIMAL(18,4) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_profile (profile_id),
+            KEY idx_org_profile (org_id, profile_id)
+        ) {$charset};";
+
+        /* 27) Invoice Notes */
+        $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_notes (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            org_id BIGINT UNSIGNED NOT NULL,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            note_number VARCHAR(64) NOT NULL,
+            note_type VARCHAR(20) NOT NULL,
+            note_date DATE NOT NULL,
+            amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+            reason LONGTEXT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'POSTED',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            UNIQUE KEY uniq_org_note_number (org_id, note_number),
+            KEY idx_org_invoice (org_id, invoice_id),
+            KEY idx_org_type_date (org_id, note_type, note_date)
+        ) {$charset};";
+
+        /* 28) Invoice Promise Tracking */
+        $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_promises (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            org_id BIGINT UNSIGNED NOT NULL,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            contact_id BIGINT UNSIGNED NULL,
+            promised_date DATE NOT NULL,
+            promised_amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+            notes LONGTEXT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+            resolution_note TEXT NULL,
+            resolved_at DATETIME NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_org_status_date (org_id, status, promised_date),
+            KEY idx_org_invoice (org_id, invoice_id),
+            KEY idx_org_contact (org_id, contact_id)
+        ) {$charset};";
+
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         foreach ($sql as $q) {
             dbDelta($q);
@@ -477,11 +571,16 @@ class TableManager
         self::ensure_column($wpdb->prefix . 'vy_invoices', 'pdf_url', "ADD COLUMN pdf_url TEXT NULL AFTER template_id");
         self::ensure_column($wpdb->prefix . 'vy_invoices', 'email_sent_at', "ADD COLUMN email_sent_at DATETIME NULL AFTER pdf_url");
         self::ensure_column($wpdb->prefix . 'vy_invoices', 'email_sent_to', "ADD COLUMN email_sent_to TEXT NULL AFTER email_sent_at");
+        self::ensure_column($wpdb->prefix . 'vy_invoices', 'recurring_profile_id', "ADD COLUMN recurring_profile_id BIGINT UNSIGNED NULL AFTER email_sent_to");
 
         self::ensure_column($wpdb->prefix . 'vy_expenses', 'gst_rate', "ADD COLUMN gst_rate DECIMAL(6,2) NULL DEFAULT 0 AFTER amount");
         self::ensure_column($wpdb->prefix . 'vy_expenses', 'gst_amount', "ADD COLUMN gst_amount DECIMAL(18,2) NULL DEFAULT 0 AFTER gst_rate");
         self::ensure_column($wpdb->prefix . 'vy_expenses', 'gst_type', "ADD COLUMN gst_type VARCHAR(32) NULL DEFAULT 'GST' AFTER gst_amount");
         self::ensure_column($wpdb->prefix . 'vy_expenses', 'is_gst_input_eligible', "ADD COLUMN is_gst_input_eligible TINYINT(1) NOT NULL DEFAULT 1 AFTER gst_type");
+        self::ensure_column($wpdb->prefix . 'vy_expenses', 'expense_account_id', "ADD COLUMN expense_account_id BIGINT UNSIGNED NULL AFTER contact_id");
+        self::ensure_column($wpdb->prefix . 'vy_expenses', 'document_type', "ADD COLUMN document_type VARCHAR(20) NOT NULL DEFAULT 'EXPENSE' AFTER expense_account_id");
+        self::ensure_column($wpdb->prefix . 'vy_expenses', 'due_date', "ADD COLUMN due_date DATE NULL AFTER expense_date");
+        self::ensure_column($wpdb->prefix . 'vy_expenses', 'reference_number', "ADD COLUMN reference_number VARCHAR(100) NULL AFTER category");
 
         self::ensure_column($wpdb->prefix . 'kbs_organizations', 'default_income_tax_rate', "ADD COLUMN default_income_tax_rate DECIMAL(5,2) NULL DEFAULT 25.00 AFTER industry");
         self::ensure_column($wpdb->prefix . 'kbs_organizations', 'is_gst_registered', "ADD COLUMN is_gst_registered TINYINT(1) NOT NULL DEFAULT 1 AFTER default_income_tax_rate");

@@ -21,24 +21,23 @@ It exists to answer:
 
 Unless the user explicitly overrides it, work in this order:
 
-1. Expand reports using current `vy_*` data.
-2. Consolidate operational logging.
-3. Add safer handling for multi-step writes.
-4. Tighten operational admin flows.
-5. Reduce duplicated frontend async/query helpers.
-6. Revisit bundle size and route-level loading only after operational gaps above are closed.
+1. Build vendor bills / purchase-bill workflow on the current expense/vendor foundations.
+2. Replace Home dashboard receivables shortcuts with the server-side receivables summary.
+3. Add rollback discipline to org member and invite writes.
+4. Add later settlement flow for unpaid expenses and bills.
+5. Keep blocked decision work out of active execution unless the user explicitly re-prioritizes it.
 
 ---
 
 ## 2. Best Next Run
 
 ### Primary Task
-Expand reports using current `vy_*` data.
+Build vendor bills / purchase-bill workflow on the current expense/vendor foundations.
 
 ### Why this should go first
-- Settings truthfulness, record history, and payment visibility are now in place, so the next highest-value gap is deeper operational reporting.
-- The repository already has enough live `vy_*` invoice, expense, payment, and journal data to support better receivables and aging views without changing the data model.
-- Stronger reports will make the current dashboard and accounting flows more useful immediately, while staying grounded in the current schema direction.
+- Recurring billing, credit/debit notes, and promise-to-pay tracking are now complete on the active invoice model.
+- The largest remaining business-control gap is payables maturity: expenses exist, but a true vendor-bill workflow is still missing.
+- The contacts, expense, journal, and reporting foundations are now strong enough to extend payables without reopening legacy schema work.
 
 ### Required reading before coding
 Read these workflow files first:
@@ -49,33 +48,34 @@ Read these workflow files first:
 - `ai-workflow/AI_IMPLEMENTATION_PLAYBOOK.md`
 
 Then inspect these current code files:
-- `plugins/khatabook/backend/Api/VyRestReports.php`
-- `plugins/khatabook/backend/Helpers/ReportHelper.php`
-- `plugins/khatabook/backend/Api/VyRestInvoices.php`
 - `plugins/khatabook/backend/Api/VyRestExpenses.php`
+- `plugins/khatabook/backend/Api/VyRestContacts.php`
 - `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
-- `plugins/khatabook/app/src/modules/reports/*`
-- `plugins/khatabook/app/src/pages/Home.jsx`
+- `plugins/khatabook/backend/Helpers/ExpenseEditHelper.php`
+- `plugins/khatabook/backend/Db/TableManager.php`
+- `plugins/khatabook/backend/Helpers/ReportHelper.php`
+- `plugins/khatabook/app/src/modules/expenses/*`
+- `plugins/khatabook/app/src/modules/contacts/*`
+- current expense, contact, report, and journal tests in `plugins/khatabook/tests/*`
 
 ### Exact target coverage for this run
-Expand reports on top of the current live business data only:
+Add vendor bills without redesigning the payables model:
 
-- add at least one receivables-focused report view
-- add aging and/or invoice status visibility where the current tables support it
-- extend report UI with strong loading, empty, and error states
-- reuse current org filters and report helpers where possible
-- keep calculations aligned with current journal/document truth
+- inspect the current expense model, vendor contact usage, payment timing, and journal rules first
+- build on `vy_*` expenses and contacts only
+- define the minimum vendor-bill lifecycle that fits current product behavior
+- make due-state and payment-state visibility operational without inventing a second disconnected expense system
 
 ### Constraints
-- Do not invent unsupported analytics or fake charts.
-- Do not read from legacy `kbs_*` business tables for new report work.
-- Do not bypass the current org-safe API path.
-- Prefer server-side aggregates over dashboard-only client derivations where practical.
+- Do not move payables work into legacy `kbs_*` business tables.
+- Do not bypass current org authorization, vendor contact resolution, or journal/payment locking behavior.
+- Do not duplicate the expense system with a disconnected bill model.
+- Do not invent deep procurement workflows if the current app only needs the payable bill lifecycle first.
 
 ### Done when
-- users can open a stronger report view sourced from live `vy_*` data
-- report calculations match current invoice, expense, and payment logic
-- empty/loading/error states are handled clearly
+- vendor bill setup, due tracking, and payment visibility are grounded in the current expense/journal architecture
+- payables behavior is org-safe and journal-safe
+- the UI exposes only the current supported payable workflow
 - workflow files are updated after completion
 - `AI_CHANGELOG.md`, `AI_FEATURE_BACKLOG.md`, and `AI_NEXT_ACTIONS.md` are updated
 
@@ -84,84 +84,84 @@ Expand reports on top of the current live business data only:
 ## 3. Best Task After That
 
 ### Next Task
-Consolidate operational logging.
+Replace Home dashboard receivables shortcuts with the server-side receivables summary.
 
-### Why this is the best product expansion after report work
-- the app now has both structured record history and older fragmented `error_log()` usage.
-- report expansion will make operational trust more important, and logging should be easier to follow before more multi-step flows are hardened.
-- this work can reuse the new `RecordAuditLogger` baseline instead of creating more one-off logging paths.
+### Why this is the best follow-up after vendor bills
+- the reporting layer already has a server-side receivables summary and aging calculation.
+- Home still uses the latest-100-open-invoices shortcut, which is now one of the clearest live accuracy gaps in the product.
+- this is a contained reliability improvement after the larger payables expansion.
 
 ### Start here
-- `plugins/khatabook/backend/Core/SystemLogger.php`
-- `plugins/khatabook/backend/Core/RecordAuditLogger.php`
-- `plugins/khatabook/backend/Api/VyRestInvoices.php`
-- `plugins/khatabook/backend/Api/VyRestExpenses.php`
-- `plugins/khatabook/backend/Email/EmailManager.php`
-- `plugins/khatabook/backend/Api/SettingsController.php`
+- `plugins/khatabook/app/src/pages/Home.jsx`
+- `plugins/khatabook/backend/Api/VyRestReports.php`
+- `plugins/khatabook/backend/Helpers/ReportHelper.php`
+- `plugins/khatabook/app/src/modules/reports/api.js`
 
 ### Minimum acceptable scope
-- identify high-value runtime failures still using raw `error_log()`
-- standardize meaningful operational logs without exposing sensitive payloads
-- keep DB-backed history for record changes distinct from broader operational logs
-- document remaining places where raw PHP logging is still the only practical option
+- reuse the existing receivables summary endpoint
+- keep the dashboard quick to load and operationally readable
+- preserve current quick actions and recent activity sections
+- remove client-side receivables math that duplicates server business logic
 
 ### Done when
-- meaningful operational errors are easier to trace across email, settings, invoice, and expense flows
-- the logging model is clearer for future work
-- no new sensitive logging is introduced
+- Home receivables and overdue cards are backed by the server-side summary
+- the dashboard no longer undercounts large orgs because of the earlier latest-100 shortcut
+- the UX remains consistent with current dashboard behavior
 
 ---
 
 ## 4. Third Task After That
 
 ### Next Task
-Add safer handling for multi-step writes.
+Add rollback discipline to org member and invite writes.
 
 ### Why this comes here
-- the live product now has more write-heavy flows, including invoice updates, payment posting, expense creation, approval, and org user/invite actions.
-- logging cleanup should happen before changing failure handling so diagnostics remain coherent.
-- this is a direct data-integrity improvement that does not require new product surface area.
+- the core financial flows now have explicit transaction boundaries or compensating cleanup, but org-user flows still lag behind.
+- org membership and invite operations are high-impact support workflows and should fail more predictably before more advanced product work resumes.
+- this remains a contained reliability task inside the current org-management architecture.
 
 ### Start here
-- `plugins/khatabook/backend/Api/VyRestInvoices.php`
-- `plugins/khatabook/backend/Api/VyRestExpenses.php`
-- `plugins/khatabook/backend/Admin/PendingUserController.php`
 - `plugins/khatabook/backend/Api/OrgUsersController.php`
-- `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
+- `plugins/khatabook/backend/Helpers/OrgHelper.php`
+- `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
+- current org/user tests in `plugins/khatabook/tests/*`
 
 ### Minimum acceptable scope
-- identify the highest-risk multi-table or side-effect-heavy flows
-- add transaction handling or compensating behavior where the current architecture supports it
-- prioritize invoice, expense, approval, and org-user write paths
-- preserve current user-visible behavior while reducing partial-write risk
+- inspect add/invite/remove/resend flows before editing
+- add explicit transaction handling or compensating cleanup where practical
+- preserve current permissions and email side effects
+- keep the current UsersAdmin UX contract intact
 
-### Do not do
-- do not redesign persistence around a new repository or service layer
-- do not attempt a whole-plugin transaction abstraction before proving current high-risk paths
+### Done when
+- the highest-risk invite/member write flows fail safely without leaving partial org state behind
+- current permissions and email outcomes still match live behavior
+- the org admin UI remains truthful about success and failure states
 
 ---
 
 ## 5. Fourth Task After That
 
 ### Next Task
-Tighten operational admin flows.
+Add later settlement flow for unpaid expenses.
 
 ### Why this comes here
-- pending users, admin log views, and operational support tooling are functional but still uneven.
-- this is safer to improve after report work, logging cleanup, and write-safety hardening because it depends less on core financial data changes.
-- the app already has both wp-admin and SPA-backed support surfaces, so clarity and consistency work here has immediate operational value.
+- once vendor bills exist, unpaid expenses/bills still need a safe later payment path.
+- this stays inside the current expense and journal model and closes the remaining payables lifecycle gap documented in tech debt.
 
 ### Start here
-- `plugins/khatabook/backend/Admin/*`
-- `plugins/khatabook/backend/Api/AdminData.php`
-- `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
-- `plugins/khatabook/backend/Core/SystemLogger.php`
+- `plugins/khatabook/backend/Api/VyRestExpenses.php`
+- `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
+- `plugins/khatabook/app/src/modules/expenses/*`
 
 ### Minimum acceptable scope
-- improve pending-user flow clarity
-- improve admin log readability and navigation
-- remove unsupported or misleading admin-side controls
-- keep wp-admin pragmatic rather than redesigning it
+- add payment/settlement for existing unpaid expense or bill records
+- preserve journal integrity and current edit/archive rules
+- avoid creating a second payment subsystem
+
+### Done when
+- existing unpaid expenses or bills can be settled safely after initial creation
+- journal integrity and current expense restrictions still hold
+- the UI does not expose unsupported settlement actions
 
 ---
 

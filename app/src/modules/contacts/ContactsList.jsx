@@ -1,3 +1,5 @@
+import FeedbackState from "../../components/ui/FeedbackState.jsx";
+
 const typeLabels = {
     CUSTOMER: "Customer",
     VENDOR: "Vendor",
@@ -16,21 +18,22 @@ export default function ContactsList({
     error,
     onEdit,
     onArchive,
+    onStatement,
 }) {
     if (loading) {
-        return <p className="kb-muted">Loading contacts…</p>;
+        return <FeedbackState title="Loading contacts" description="Fetching the filtered contact directory." tone="loading" />;
     }
 
     if (error) {
-        return <p className="text-red-600">{error.message}</p>;
+        return <FeedbackState title="Unable to load contacts" description={error.message} tone="error" />;
     }
 
     if (!contacts.length) {
-        return <p>No contacts match the current filters.</p>;
+        return <FeedbackState title="No contacts match the current filters" description="Adjust the filters or add a new contact to populate this directory." tone="empty" />;
     }
 
     return (
-        <div className="overflow-auto">
+        <div className="ui-table-wrap">
             <table className="kb-data-table">
                 <thead>
                     <tr>
@@ -66,6 +69,15 @@ export default function ContactsList({
                                 >
                                     Edit
                                 </button>
+                                {["CUSTOMER", "BOTH"].includes(String(contact.type || "").toUpperCase()) ? (
+                                    <button
+                                        type="button"
+                                        className="kb-btn kb-btn--ghost kb-btn--small"
+                                        onClick={() => onStatement?.(contact)}
+                                    >
+                                        Statement
+                                    </button>
+                                ) : null}
                                 <button
                                     type="button"
                                     className="kb-btn kb-btn--ghost kb-btn--small kb-btn--danger"

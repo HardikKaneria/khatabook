@@ -17,6 +17,7 @@ require_once __DIR__ . '/backend/Helpers/ReportHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceTemplateHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceRenderHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceTemplateRenderHelper.php';
+require_once __DIR__ . '/backend/Helpers/InvoiceFinancialHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceEditHelper.php';
 require_once __DIR__ . '/backend/Helpers/ExpenseEditHelper.php';
 require_once __DIR__ . '/backend/Auth/AuthSessionHelper.php';

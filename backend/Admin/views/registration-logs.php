@@ -4,12 +4,26 @@
  */
 
 use KBS\Admin\AdminPage;
+use KBS\Api\AdminData;
 
 if (!defined('ABSPATH')) exit;
 
-global $wpdb;
-$table = $wpdb->prefix . 'kbs_registration_logs';
-$logs = $wpdb->get_results("SELECT * FROM {$table} ORDER BY id DESC LIMIT 100");
+$page = AdminPage::request_int('paged', 1, 1);
+$per_page = AdminPage::request_int('per_page', 25, 1, 100);
+$email = AdminPage::request_email('email');
+
+$request = new \WP_REST_Request('GET');
+$request->set_param('page', $page);
+$request->set_param('per_page', $per_page);
+if ($email !== '') {
+	$request->set_param('email', $email);
+}
+
+$response = AdminData::get_registration_logs($request);
+$logs = $response->get_data();
+$headers = $response->get_headers();
+$total = (int) ($headers['X-WP-Total'] ?? count($logs));
+$has_filters = $email !== '';
 
 $emails = array_values(array_filter(array_unique(array_map(static function ($log): string {
 	return AdminPage::value($log, ['email'], '');
@@ -21,14 +35,14 @@ AdminPage::render_page_start(
 	'Track signup activity in a readable feed layout that is easier to extend with tags, filters, and notes.',
 	[
 		[
-			'label'  => 'Entries shown',
-			'value'  => number_format_i18n(count($logs)),
-			'helper' => 'Latest 100 records',
+			'label'  => 'Entries matched',
+			'value'  => number_format_i18n($total),
+			'helper' => 'Current filtered result size',
 		],
 		[
-			'label'  => 'Unique emails',
+			'label'  => 'Emails shown',
 			'value'  => number_format_i18n(count($emails)),
-			'helper' => 'Contacts represented in this list',
+			'helper' => 'Current page only',
 		],
 		[
 			'label'  => 'Latest entry',
@@ -37,7 +51,7 @@ AdminPage::render_page_start(
 		],
 	],
 	[
-		'note' => 'Showing the latest 100 records to keep the page fast as the log grows.',
+		'note' => 'This page now follows the same paginated admin dataset as the REST support endpoints.',
 	]
 );
 ?>
@@ -46,13 +60,36 @@ AdminPage::render_page_start(
 	<div class="kbs-panel__header">
 		<div>
 			<h2 class="kbs-panel__title">Recent Registration Activity</h2>
-			<p class="kbs-panel__description">Every event is presented as a flexible record card instead of a fixed table row.</p>
+			<p class="kbs-panel__description">Filter by exact email when support needs to trace a specific registration path.</p>
 		</div>
-		<?php echo AdminPage::badge('Latest 100', 'info'); ?>
+		<?php echo AdminPage::badge($has_filters ? 'Filtered results' : 'Operational log', 'info'); ?>
 	</div>
 
+	<?php
+	AdminPage::render_filter_form([
+		[
+			'name' => 'email',
+			'label' => 'Email',
+			'type' => 'email',
+			'value' => $email,
+			'placeholder' => 'name@company.com',
+		],
+		[
+			'name' => 'per_page',
+			'label' => 'Rows per page',
+			'type' => 'select',
+			'value' => (string) $per_page,
+			'options' => [
+				'25' => '25',
+				'50' => '50',
+				'100' => '100',
+			],
+		],
+	]);
+	?>
+
 	<?php if (empty($logs)) : ?>
-		<?php AdminPage::render_empty_state('No registration logs', 'Registration events will appear here once users start signing up.'); ?>
+		<?php AdminPage::render_empty_state($has_filters ? 'No matching registration logs' : 'No registration logs', $has_filters ? 'No registration entries match the current filters. Reset the filters to inspect the wider log.' : 'Registration events will appear here once users start signing up.'); ?>
 	<?php else : ?>
 		<div class="kbs-record-list">
 			<?php foreach ($logs as $log) : ?>
@@ -86,6 +123,7 @@ AdminPage::render_page_start(
 				</article>
 			<?php endforeach; ?>
 		</div>
+		<?php AdminPage::render_pagination($page, $per_page, $total); ?>
 	<?php endif; ?>
 </section>
 

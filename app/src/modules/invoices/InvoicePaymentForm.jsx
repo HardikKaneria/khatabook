@@ -10,7 +10,7 @@ export default function InvoicePaymentForm({
     onCancel,
 }) {
     const today = new Date().toISOString().slice(0, 10);
-    const remaining = Math.max(0, (invoice?.total || 0) - (invoice?.paid_amount || 0));
+    const remaining = Math.max(0, invoice?.balance_due || 0);
     const [form, setForm] = useState({
         date: today,
         amount: remaining || "",
