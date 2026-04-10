@@ -282,6 +282,11 @@ export default function InvoiceDetailPage({ invoiceId }) {
                             {invoice.edit_block_reason}
                         </p>
                     ) : null}
+                    {invoice?.risk_summary?.issue_count ? (
+                        <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+                            {invoice.risk_summary.issue_count} invoice risk flag{invoice.risk_summary.issue_count === 1 ? "" : "s"} detected. Review the risk checks before emailing or relying on the PDF.
+                        </p>
+                    ) : null}
                     {emailInfo ? (
                         <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
                             {emailInfo}

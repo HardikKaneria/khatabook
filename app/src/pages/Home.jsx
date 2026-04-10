@@ -1,9 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import { getAccounts } from "../modules/accounts/api";
 import { getExpenses } from "../modules/expenses/api";
 import { getInvoices } from "../modules/invoices/api";
 import { getPayments } from "../modules/payments/api";
-import { getGstSummary, getProfitSummary, getReceivablesSummary, getTaxEstimate } from "../modules/reports/api";
+import {
+    getBillingHealth,
+    getGstSummary,
+    getOwnerDailyBrief,
+    getProfitSummary,
+    getReceivablesSummary,
+    getRevenueLeaks,
+    getTaxEstimate,
+} from "../modules/reports/api";
+import RevenueLeakPanel from "../modules/reports/RevenueLeakPanel.jsx";
+import useAsyncResource from "../hooks/useAsyncResource";
 
 const isMoneyAccount = (account) =>
     ["BANK", "CASH", "WALLET"].includes(String(account?.sub_type || "").toUpperCase());
@@ -28,86 +38,84 @@ const buildRange = () => {
     };
 };
 
+const EMPTY_HOME_STATE = {
+    error: "",
+    invoices: [],
+    payments: [],
+    expenses: [],
+    accounts: [],
+    receivables: null,
+    profit: null,
+    gst: null,
+    tax: null,
+    health: null,
+    brief: null,
+    revenueLeaks: null,
+};
+
+async function loadHomeState() {
+    const range = buildRange();
+    const results = await Promise.allSettled([
+        getInvoices({ per_page: 5 }),
+        getPayments({ per_page: 5 }),
+        getExpenses({ per_page: 5, status: "ACTIVE" }),
+        getAccounts(),
+        getReceivablesSummary({ ...range, as_of: range.to }),
+        getProfitSummary(range),
+        getGstSummary(range),
+        getTaxEstimate(range),
+        getBillingHealth({ ...range, as_of: range.to }),
+        getOwnerDailyBrief({ as_of: range.to }),
+        getRevenueLeaks({ ...range, as_of: range.to }),
+    ]);
+
+    const [
+        recentInvoicesResult,
+        recentPaymentsResult,
+        recentExpensesResult,
+        accountsResult,
+        receivablesResult,
+        profitResult,
+        gstResult,
+        taxResult,
+        healthResult,
+        briefResult,
+        revenueLeakResult,
+    ] = results;
+
+    const invoiceError = recentInvoicesResult.status === "rejected" ? recentInvoicesResult.reason : null;
+    const expenseError = recentExpensesResult.status === "rejected" ? recentExpensesResult.reason : null;
+    const accountError = accountsResult.status === "rejected" ? accountsResult.reason : null;
+    const paymentError = recentPaymentsResult.status === "rejected" ? recentPaymentsResult.reason : null;
+    const reportError = [
+        receivablesResult,
+        profitResult,
+        gstResult,
+        taxResult,
+        healthResult,
+        briefResult,
+        revenueLeakResult,
+    ].find((result) => result.status === "rejected")?.reason || null;
+
+    return {
+        error: invoiceError?.message || paymentError?.message || expenseError?.message || accountError?.message || reportError?.message || "",
+        invoices: recentInvoicesResult.status === "fulfilled" ? (recentInvoicesResult.value?.data || []) : [],
+        payments: recentPaymentsResult.status === "fulfilled" ? (recentPaymentsResult.value?.data || []) : [],
+        expenses: recentExpensesResult.status === "fulfilled" ? (recentExpensesResult.value?.data || []) : [],
+        accounts: accountsResult.status === "fulfilled" ? (accountsResult.value || []) : [],
+        receivables: receivablesResult.status === "fulfilled" ? receivablesResult.value : null,
+        profit: profitResult.status === "fulfilled" ? profitResult.value : null,
+        gst: gstResult.status === "fulfilled" ? gstResult.value : null,
+        tax: taxResult.status === "fulfilled" ? taxResult.value : null,
+        health: healthResult.status === "fulfilled" ? healthResult.value : null,
+        brief: briefResult.status === "fulfilled" ? briefResult.value : null,
+        revenueLeaks: revenueLeakResult.status === "fulfilled" ? revenueLeakResult.value : null,
+    };
+}
+
 export default function Home({ user }) {
-    const [state, setState] = useState({
-        loading: true,
-        error: "",
-        invoices: [],
-        payments: [],
-        expenses: [],
-        accounts: [],
-        receivables: null,
-        profit: null,
-        gst: null,
-        tax: null,
-    });
-
-    useEffect(() => {
-        let cancelled = false;
-        const range = buildRange();
-
-        (async () => {
-            setState((prev) => ({ ...prev, loading: true, error: "" }));
-
-            const results = await Promise.allSettled([
-                getInvoices({ per_page: 5 }),
-                getPayments({ per_page: 5 }),
-                getExpenses({ per_page: 5, status: "ACTIVE" }),
-                getAccounts(),
-                getReceivablesSummary({ ...range, as_of: range.to }),
-                getProfitSummary(range),
-                getGstSummary(range),
-                getTaxEstimate(range),
-            ]);
-
-            if (cancelled) {
-                return;
-            }
-
-            const [
-                recentInvoicesResult,
-                recentPaymentsResult,
-                recentExpensesResult,
-                accountsResult,
-                receivablesResult,
-                profitResult,
-                gstResult,
-                taxResult,
-            ] = results;
-
-            const invoiceError = recentInvoicesResult.status === "rejected" ? recentInvoicesResult.reason : null;
-            const expenseError = recentExpensesResult.status === "rejected" ? recentExpensesResult.reason : null;
-            const accountError = accountsResult.status === "rejected" ? accountsResult.reason : null;
-            const paymentError = recentPaymentsResult.status === "rejected" ? recentPaymentsResult.reason : null;
-            const reportError =
-                receivablesResult.status === "rejected"
-                    ? receivablesResult.reason
-                    : profitResult.status === "rejected"
-                    ? profitResult.reason
-                    : gstResult.status === "rejected"
-                        ? gstResult.reason
-                        : taxResult.status === "rejected"
-                            ? taxResult.reason
-                            : null;
-
-            setState({
-                loading: false,
-                error: invoiceError?.message || paymentError?.message || expenseError?.message || accountError?.message || reportError?.message || "",
-                invoices: recentInvoicesResult.status === "fulfilled" ? (recentInvoicesResult.value?.data || []) : [],
-                payments: recentPaymentsResult.status === "fulfilled" ? (recentPaymentsResult.value?.data || []) : [],
-                expenses: recentExpensesResult.status === "fulfilled" ? (recentExpensesResult.value?.data || []) : [],
-                accounts: accountsResult.status === "fulfilled" ? (accountsResult.value || []) : [],
-                receivables: receivablesResult.status === "fulfilled" ? receivablesResult.value : null,
-                profit: profitResult.status === "fulfilled" ? profitResult.value : null,
-                gst: gstResult.status === "fulfilled" ? gstResult.value : null,
-                tax: taxResult.status === "fulfilled" ? taxResult.value : null,
-            });
-        })();
-
-        return () => {
-            cancelled = true;
-        };
-    }, [user?.orgId]);
+    const { data: loadedState, loading } = useAsyncResource(() => loadHomeState(), [user?.orgId]);
+    const state = loadedState || EMPTY_HOME_STATE;
 
     const moneyAccounts = useMemo(
         () => state.accounts.filter(isMoneyAccount).sort((left, right) => Number(right.balance || 0) - Number(left.balance || 0)),
@@ -120,6 +128,8 @@ export default function Home({ user }) {
             overdueAmount: Number(state.receivables?.overdue_amount || 0),
             overdueCount: Number(state.receivables?.overdue_count || 0),
             invoiceCount: Number(state.receivables?.open_invoice_count || 0),
+            averageDaysOverdue: Number(state.receivables?.average_days_overdue || 0),
+            asOf: state.receivables?.as_of || "",
         };
     }, [state.receivables]);
 
@@ -127,6 +137,10 @@ export default function Home({ user }) {
         () => state.expenses.reduce((sum, expense) => sum + Number(expense?.amount || 0), 0),
         [state.expenses]
     );
+
+    const healthSummary = state.health || null;
+    const briefSummary = state.brief || null;
+    const revenueLeakSummary = state.revenueLeaks || null;
 
     return (
         <div className="dashboard-home">
@@ -164,27 +178,159 @@ export default function Home({ user }) {
                 <MetricCard
                     label="Open Receivables"
                     value={`₹ ${formatCurrency(receivables.outstandingAmount)}`}
-                    detail={`${receivables.invoiceCount} invoice${receivables.invoiceCount === 1 ? "" : "s"} awaiting payment`}
-                    loading={state.loading}
+                    detail={
+                        receivables.invoiceCount
+                            ? `${receivables.invoiceCount} invoice${receivables.invoiceCount === 1 ? "" : "s"} awaiting payment as of ${receivables.asOf || "today"}`
+                            : `No open invoices as of ${receivables.asOf || "today"}`
+                    }
+                    loading={loading}
                 />
                 <MetricCard
                     label="Overdue Amount"
                     value={`₹ ${formatCurrency(receivables.overdueAmount)}`}
-                    detail={receivables.overdueCount ? `${receivables.overdueCount} overdue invoice${receivables.overdueCount === 1 ? "" : "s"}` : "No overdue invoices in the loaded set"}
+                    detail={
+                        receivables.overdueCount
+                            ? `${receivables.overdueCount} overdue invoice${receivables.overdueCount === 1 ? "" : "s"} · avg ${receivables.averageDaysOverdue.toFixed(1)} days late`
+                            : `No overdue invoices as of ${receivables.asOf || "today"}`
+                    }
                     tone={receivables.overdueAmount > 0 ? "warning" : "neutral"}
-                    loading={state.loading}
+                    loading={loading}
                 />
                 <MetricCard
                     label="Money Account Balance"
                     value={`₹ ${formatCurrency(moneyAccounts.reduce((sum, account) => sum + Number(account?.balance || 0), 0))}`}
                     detail={`${moneyAccounts.length} active bank, cash, or wallet accounts`}
-                    loading={state.loading}
+                    loading={loading}
                 />
                 <MetricCard
                     label="Month Profit"
                     value={`₹ ${formatCurrency(state.profit?.profit || 0)}`}
                     detail={`Estimated tax ₹ ${formatCurrency(state.tax?.estimated_income_tax || 0)}`}
-                    loading={state.loading}
+                    loading={loading}
+                />
+            </section>
+
+            <div className="dashboard-home__grid">
+                <section className="dashboard-home__card">
+                    <SectionHeader
+                        title="Billing Health Score"
+                        subtitle="A transparent score built from live receivables, payables, promise, and margin signals."
+                        actionLabel="Open reports"
+                        onAction={() => navigate("/reports")}
+                    />
+                    {loading ? (
+                        <p className="kb-muted">Loading billing health…</p>
+                    ) : healthSummary ? (
+                        <div className="dashboard-home__health">
+                            <div className={`dashboard-home__health-score dashboard-home__health-score--${healthSummary.status || "steady"}`}>
+                                <strong>{healthSummary.score ?? 0}</strong>
+                                <span>/ {healthSummary.max_score ?? 100}</span>
+                            </div>
+                            <div className="dashboard-home__health-copy">
+                                <h4>{healthSummary.headline || "Billing health summary"}</h4>
+                                <p>{healthSummary.as_of ? `As of ${healthSummary.as_of}.` : "Live health summary."}</p>
+                            </div>
+                            <div className="dashboard-home__health-components">
+                                {(healthSummary.components || []).map((component) => (
+                                    <div key={component.key} className="dashboard-home__health-component">
+                                        <div>
+                                            <strong>{component.label}</strong>
+                                            <p>{component.detail}</p>
+                                        </div>
+                                        <span>{component.points}/{component.max_points}</span>
+                                    </div>
+                                ))}
+                            </div>
+                            {Array.isArray(healthSummary.actions) && healthSummary.actions.length ? (
+                                <div className="dashboard-home__brief-list">
+                                    {healthSummary.actions.map((action) => (
+                                        <p key={action}>- {action}</p>
+                                    ))}
+                                </div>
+                            ) : null}
+                        </div>
+                    ) : (
+                        <EmptyState
+                            title="Billing health unavailable"
+                            description="Health scoring needs current receivables, payables, promise, and margin data."
+                            actionLabel="Open reports"
+                            onAction={() => navigate("/reports")}
+                        />
+                    )}
+                </section>
+
+                <section className="dashboard-home__card">
+                    <SectionHeader
+                        title="Owner Daily Brief"
+                        subtitle="Yesterday’s movement plus today’s collection and vendor-payment follow-ups."
+                        actionLabel="Open reports"
+                        onAction={() => navigate("/reports")}
+                    />
+                    {loading ? (
+                        <p className="kb-muted">Loading daily brief…</p>
+                    ) : briefSummary ? (
+                        <div className="dashboard-home__brief">
+                            <div className="dashboard-home__snapshot-grid">
+                                <SnapshotCard
+                                    label="Collections Yesterday"
+                                    value={`₹ ${formatCurrency(briefSummary.summary?.collections_yesterday_amount || 0)}`}
+                                />
+                                <SnapshotCard
+                                    label="Invoices Yesterday"
+                                    value={`${briefSummary.summary?.invoices_created_yesterday_count || 0}`}
+                                />
+                                <SnapshotCard
+                                    label="Expenses Yesterday"
+                                    value={`₹ ${formatCurrency(briefSummary.summary?.expenses_added_yesterday_amount || 0)}`}
+                                />
+                                <SnapshotCard
+                                    label="Promises Due Today"
+                                    value={`₹ ${formatCurrency(briefSummary.summary?.promises_due_today_amount || 0)}`}
+                                />
+                            </div>
+                            <div className="dashboard-home__brief-meta">
+                                <p>
+                                    Overdue invoices: <strong>{briefSummary.summary?.overdue_invoice_count || 0}</strong> · Due today:{" "}
+                                    <strong>{briefSummary.summary?.due_today_invoice_count || 0}</strong>
+                                </p>
+                                <p>
+                                    Overdue bills: <strong>{briefSummary.summary?.overdue_bill_count || 0}</strong> · Due today:{" "}
+                                    <strong>{briefSummary.summary?.due_today_bill_count || 0}</strong>
+                                </p>
+                            </div>
+                            {Array.isArray(briefSummary.priorities) && briefSummary.priorities.length ? (
+                                <div className="dashboard-home__brief-list">
+                                    {briefSummary.priorities.map((priority) => (
+                                        <p key={priority}>- {priority}</p>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p className="kb-muted">No urgent follow-ups are due today.</p>
+                            )}
+                        </div>
+                    ) : (
+                        <EmptyState
+                            title="Daily brief unavailable"
+                            description="The brief needs recent invoice, payment, expense, and promise activity."
+                            actionLabel="Open reports"
+                            onAction={() => navigate("/reports")}
+                        />
+                    )}
+                </section>
+            </div>
+
+            <section className="dashboard-home__card">
+                <SectionHeader
+                    title="Revenue Leak Detector"
+                    subtitle="Grounded warnings for missed recurring runs, broken promises, stale drafts, and overdue invoices."
+                    actionLabel="Open reports"
+                    onAction={() => navigate("/reports")}
+                />
+                <RevenueLeakPanel
+                    summary={revenueLeakSummary}
+                    loading={loading}
+                    compact
+                    onNavigate={navigate}
                 />
             </section>
 
@@ -196,7 +342,7 @@ export default function Home({ user }) {
                         actionLabel="Open invoices"
                         onAction={() => navigate("/invoices")}
                     />
-                    {state.loading ? (
+                    {loading ? (
                         <p className="kb-muted">Loading invoices…</p>
                     ) : state.invoices.length ? (
                         <div className="dashboard-home__list">
@@ -235,7 +381,7 @@ export default function Home({ user }) {
                         actionLabel="Open expenses"
                         onAction={() => navigate("/expenses")}
                     />
-                    {state.loading ? (
+                    {loading ? (
                         <p className="kb-muted">Loading expenses…</p>
                     ) : state.expenses.length ? (
                         <div className="dashboard-home__list">
@@ -274,7 +420,7 @@ export default function Home({ user }) {
                         actionLabel="Open payments"
                         onAction={() => navigate("/payments")}
                     />
-                    {state.loading ? (
+                    {loading ? (
                         <p className="kb-muted">Loading payments…</p>
                     ) : state.payments.length ? (
                         <div className="dashboard-home__list">
@@ -315,7 +461,7 @@ export default function Home({ user }) {
                         actionLabel="Open accounts"
                         onAction={() => navigate("/accounts")}
                     />
-                    {state.loading ? (
+                    {loading ? (
                         <p className="kb-muted">Loading accounts…</p>
                     ) : moneyAccounts.length ? (
                         <div className="dashboard-home__list">
@@ -354,7 +500,7 @@ export default function Home({ user }) {
                         actionLabel="Open reports"
                         onAction={() => navigate("/reports")}
                     />
-                    {state.loading ? (
+                    {loading ? (
                         <p className="kb-muted">Loading summaries…</p>
                     ) : (
                         <div className="dashboard-home__snapshot-grid">

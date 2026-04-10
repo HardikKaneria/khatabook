@@ -310,6 +310,14 @@ class VyRestInvoices
         $editState = vy_invoice_edit_state($invoice, $payments);
         $invoice['can_edit'] = $editState['can_edit'];
         $invoice['edit_block_reason'] = $editState['reason'];
+        $invoice['risk_summary'] = vy_get_invoice_risk_summary(
+            (int) $org,
+            $invoice,
+            $invoice['items'],
+            $invoice['payments'],
+            $invoice['adjustments'],
+            $invoice['promises']
+        );
         $invoice['contact_id'] = $invoice['contact_id'] ? (int) $invoice['contact_id'] : null;
         if ($invoice['contact_id']) {
             $invoice['contact'] = self::format_contact_summary(self::fetch_contact((int) $org, $invoice['contact_id']));

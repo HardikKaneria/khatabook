@@ -21,6 +21,7 @@ import PageContainer from "../components/ui/PageContainer.jsx";
 import PageHeader from "../components/ui/PageHeader.jsx";
 import PrimaryButton from "../components/ui/PrimaryButton.jsx";
 import CompanyLogoUploader from "../components/settings/CompanyLogoUploader.jsx";
+import useAsyncResource from "../hooks/useAsyncResource";
 
 // ---------------------------------------------------------------------------
 // --------------------------- Defaults --------------------------------------
@@ -76,36 +77,6 @@ function buildData(fetchedSettings) {
     });
     return result;
 }
-const tryParse = (maybeJson) => {
-    if (typeof maybeJson !== "string") return maybeJson;
-    try {
-        const first = JSON.parse(maybeJson);
-        return typeof first === "string" ? JSON.parse(first) : first;
-    } catch {
-        return null;
-    }
-};
-
-const normalizeAuth = (raw) => {
-    if (!raw) return {};
-    if (typeof raw === "object" && raw.user) return raw;
-    if (typeof raw === "object" && typeof raw._plain === "string") return tryParse(raw._plain) || {};
-    if (typeof raw === "string") return tryParse(raw) || {};
-    return raw || {};
-};
-
-const getOrgIdFromAuth = (auth) => {
-    const user = auth?.user || {};
-    return (
-        user?.org_id ??
-        user?.orgId ??
-        auth?.org_id ??
-        auth?.orgId ??
-        (Array.isArray(user?.orgs) &&
-            (user.orgs.find((o) => o.is_primary)?.org_id ?? user.orgs[0]?.org_id))
-    );
-};
-
 // --------------------------- Small Layout bits -------------------------------
 function SectionCard({ id, title, extra, children, loading }) {
     return (
@@ -130,24 +101,10 @@ function SaveBar({ onSave, saving, disabled }) {
 // ------------------------------- Page ----------------------------------------
 export default function SettingsAntD() {
     const message = useToast();
-
-    const [auth, setAuth] = useState(null);
-    useEffect(() => {
-        let alive = true;
-        (async () => {
-            try {
-                const raw = await getAuth();         // await!
-                if (!alive) return;
-                setAuth(raw || {});
-            } catch (e) {
-                if (!alive) return;
-                console.error("[AUTH] load failed", e);
-                message.error("Failed to load auth");
-                setAuth({});
-            }
-        })();
-        return () => { alive = false; };
-    }, [message]);
+    const { data: auth = null, loading: authLoading, error: authError } = useAsyncResource(
+        () => getAuth().then((raw) => raw || {}),
+        []
+    );
 
     const orgId = useMemo(() => {
         const u = auth?.user || {};
@@ -161,7 +118,6 @@ export default function SettingsAntD() {
 
     // ---- keep the rest of your state as-is
     const [data, setData] = useState(buildData({}));
-    const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState({});
     const [versions, setVersions] = useState({});
     const [savingAll, setSavingAll] = useState(false);
@@ -225,38 +181,53 @@ export default function SettingsAntD() {
         },
         [apiFetch]
     );
+    const authReady = !authLoading && auth !== null;
+    const {
+        data: loadedSettings,
+        loading: settingsLoading,
+        error: settingsError,
+    } = useAsyncResource(
+        async () => {
+            if (!authReady) {
+                return null;
+            }
+            if (!orgId) {
+                throw new Error("Your account is missing an organization. Please re-login or contact support.");
+            }
+            return fetchSettings(orgId);
+        },
+        [authReady, orgId, auth?.rest?.root, auth?.token, fetchSettings]
+    );
 
-    // Initial load
+    const loading = authLoading || (authReady && settingsLoading);
+
     useEffect(() => {
-        if (!auth) return;                 // wait until auth is resolved
-        if (!orgId) {
-            console.error("[AUTH] No orgId available for company settings.");
-            message.error("Your account is missing an organization. Please re-login or contact support.");
-            setLoading(false);
+        if (!loadedSettings) {
             return;
         }
-        let alive = true;
-        (async () => {
-            setLoading(true);
-            try {
-                const { settings, versions: v } = await fetchSettings(orgId);
-                if (!alive) return;
-                setData(buildData(settings));
-                setVersions(v || {});
-                setLastError("");
-            } catch (e) {
-                if (!alive) return;
-                console.error(e);
-                const msg = e?.message || "Failed to load settings";
-                setLastError(msg);
-                message.error(msg);
-                setData(buildData({}));
-            } finally {
-                if (alive) setLoading(false);
-            }
-        })();
-        return () => { alive = false; };
-    }, [auth, orgId, fetchSettings, message]);
+        setData(buildData(loadedSettings.settings));
+        setVersions(loadedSettings.versions || {});
+        setLastError("");
+    }, [loadedSettings]);
+
+    useEffect(() => {
+        if (!authError) {
+            return;
+        }
+        setLastError("Failed to load auth.");
+        message.error("Failed to load auth.");
+    }, [authError, message]);
+
+    useEffect(() => {
+        if (!settingsError) {
+            return;
+        }
+        const msg = settingsError?.message || "Failed to load settings";
+        setLastError(msg);
+        setData(buildData({}));
+        setVersions({});
+        message.error(msg);
+    }, [settingsError, message]);
 
     // Per-category save
     const onSave = async (category) => {
@@ -269,10 +240,12 @@ export default function SettingsAntD() {
             if (nextVersion != null) {
                 setVersions((v) => ({ ...v, [category]: nextVersion }));
             }
+            setLastError("");
             message.success(`${category} saved`);
         } catch (e) {
-            console.error(e);
-            message.error(e.message || `Failed to save ${category}`);
+            const msg = e?.message || `Failed to save ${category}`;
+            setLastError(msg);
+            message.error(msg);
         } finally {
             setSaving((s) => ({ ...s, [category]: false }));
         }
@@ -289,10 +262,12 @@ export default function SettingsAntD() {
             });
             const resp = await saveAll(orgId, batch, versions);
             if (resp && resp.versions) setVersions(resp.versions);
+            setLastError("");
             message.success("All settings saved");
         } catch (e) {
-            console.error(e);
-            message.error(e.message || "Failed to save all settings");
+            const msg = e?.message || "Failed to save all settings";
+            setLastError(msg);
+            message.error(msg);
         } finally {
             setSavingAll(false);
         }

@@ -48,9 +48,12 @@ export default function ExpensesList({ expenses = [], loading, error, onSelectEx
                             <td>
                                 <div>
                                     <strong>{expense.workflow_status || expense.status || "POSTED"}</strong>
+                                    <div className="kb-muted" style={{ fontSize: 12 }}>
+                                        {expense.payment_state === "PAID" ? "Paid" : "Unpaid"}
+                                    </div>
                                     {expense.document_type === "BILL" && expense.due_date ? (
                                         <div className="kb-muted" style={{ fontSize: 12 }}>
-                                            Due {expense.due_date}
+                                            Due {expense.due_date}{expense.due_state === "OVERDUE" ? " · Overdue" : expense.due_state === "DUE_TODAY" ? " · Due today" : ""}
                                         </div>
                                     ) : null}
                                 </div>

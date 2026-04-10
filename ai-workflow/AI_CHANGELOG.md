@@ -39,6 +39,153 @@ Each entry should include:
 - ...
 ```
 
+## 2026-04-10 - Revenue Leak Detection And Email System Cleanup
+
+### Summary
+- Completed three safe tasks in order after re-reading `AGENTS.md`, the workflow docs, and the relevant current code paths: shipped the revenue leak detector, corrected the canonical Vyavhar email/document rendering path, and added a dedicated OTP email template.
+- Kept the work inside the existing reporting, email, auth, and invoice architecture instead of introducing a new analytics subsystem, a second mailer path, or an external AI/OCR dependency.
+- Reconciled the workflow queue afterward so future runs no longer point at the now-finished leak/email tasks and instead prioritize the still-confirmed Expenses runtime crash and payment/account integrity gaps.
+
+### Files Changed
+- `backend/Helpers/ReportHelper.php`
+- `backend/Api/VyRestReports.php`
+- `app/src/modules/reports/api.js`
+- `app/src/modules/reports/RevenueLeakPanel.jsx`
+- `app/src/pages/Home.jsx`
+- `app/src/modules/reports/ProfitTaxPage.jsx`
+- `app/src/theme.css`
+- `backend/Email/EmailManager.php`
+- `backend/Helpers/InvoiceEmailHelper.php`
+- `backend/Auth/OtpAuth.php`
+- `backend/Api/OrgUsersController.php`
+- `main.php`
+- `tests/bootstrap.php`
+- `tests/TestWpEnvironment.php`
+- `tests/ReportsControllerTest.php`
+- `tests/OtpAuthFlowTest.php`
+- `tests/EmailManagerTest.php`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+- `php -l` passed on the changed PHP files, including the report helpers/controllers, email/auth files, and updated test harness files.
+- `composer test` in `plugins/khatabook` passed with `55 passed, 0 failed`.
+- `npm run build` in `plugins/khatabook/app` passed after the report/dashboard UI changes.
+
+### Workflow Updates
+- Marked `P0-06`, `P0-07`, and `P3-05` done in `AI_FEATURE_BACKLOG.md`.
+- Marked `P3-06` blocked until there is explicit AI/provider approval and kept OCR blocked for the existing dependency reasons.
+- Reordered `AI_NEXT_ACTIONS.md` so the next default-safe queue is now the confirmed Expenses crash, then account lifecycle, then invoice payment integrity fixes.
+- Updated `AI_MASTER_BRIEF.md`, `AI_FILE_MAP.md`, and `AI_TECH_DEBT.md` so future runs treat revenue leak detection plus branded document/OTP email behavior as current baseline capability.
+
+### Remaining Risks / Follow-Up
+- `app/src/modules/expenses/ExpensesPage.jsx` still has the confirmed `formatCurrency` runtime failure and should be the next repair.
+- Invoice payment posting still lacks duplicate-submit protection and truthful fully-paid CTA gating.
+- AI invoice assistant and OCR remain blocked until there is explicit dependency and product-direction approval.
+
+## 2026-04-08 - Expense Settlement, Payables Reporting, And Shared State Cleanup
+
+### Summary
+- Completed the next three safe execution tasks in order: added later settlement for unpaid expenses and vendor bills, expanded payables reporting on live `vy_expenses` data, and normalized `Home.jsx` and `CompanySettings.jsx` onto the shared async/state pattern.
+- Kept the work inside the existing plugin architecture by extending `VyRestExpenses.php`, `VyRestReports.php`, `ReportHelper.php`, and the existing SPA pages instead of introducing new payment subsystems, new reporting stores, or a frontend state-management rewrite.
+- Added focused controller-level coverage for expense settlement and payables reporting, and updated the lightweight test environment to understand the richer live `vy_expenses` report query shape.
+
+### Files Changed
+- `backend/Api/VyRestExpenses.php`
+- `backend/Helpers/ExpenseEditHelper.php`
+- `backend/Api/VyRestReports.php`
+- `backend/Helpers/ReportHelper.php`
+- `app/src/modules/expenses/api.js`
+- `app/src/modules/expenses/ExpenseDetailPage.jsx`
+- `app/src/modules/expenses/ExpenseDetail.jsx`
+- `app/src/modules/reports/api.js`
+- `app/src/modules/reports/ProfitTaxPage.jsx`
+- `app/src/hooks/useAsyncResource.js`
+- `app/src/pages/Home.jsx`
+- `app/src/pages/CompanySettings.jsx`
+- `tests/ExpenseControllerTest.php`
+- `tests/ReportsControllerTest.php`
+- `tests/TestWpEnvironment.php`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+- `php -l` passed on:
+  - `backend/Helpers/ExpenseEditHelper.php`
+  - `backend/Api/VyRestExpenses.php`
+  - `backend/Helpers/ReportHelper.php`
+  - `backend/Api/VyRestReports.php`
+  - `tests/ExpenseControllerTest.php`
+  - `tests/ReportsControllerTest.php`
+  - `tests/TestWpEnvironment.php`
+- `composer test` in `plugins/khatabook` passed with `49 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+
+### Workflow Updates
+- Marked `P2-11`, `P2-12`, and `P2-13` complete in `AI_FEATURE_BACKLOG.md`.
+- Promoted the remaining roadmap-safe queue to `P3-01`, `P3-02`, and `P3-03` in `AI_NEXT_ACTIONS.md`.
+- Updated the master brief, file map, and tech debt notes so future runs treat expense later settlement, payables reporting, and shared async normalization as current baseline behavior rather than open gaps.
+
+### Remaining Risks / Follow-Up
+- `ProfitTaxPage.jsx` still coordinates several report endpoints through one bespoke page-level loader.
+- Home still fans out through multiple dashboard calls because there is no dedicated aggregated dashboard endpoint yet.
+- The next default-safe work is now advanced roadmap work, not another unfinished P0-P2 operational gap.
+
+## 2026-04-07 - Vendor Bills, Dashboard Summary Truthfulness, And Org Write Rollback
+
+### Summary
+- Completed the next three safe execution tasks in order: made vendor bills first-class on the live `vy_expenses` model, aligned the dashboard receivables copy with the already-live server-side summary, and tightened the remaining high-risk org invite/member rollback paths.
+- Kept all work inside the current plugin architecture by extending `VyRestExpenses.php`, `OrgUsersController.php`, and the existing SPA expenses/dashboard screens instead of introducing new tables, routers, or payables subsystems.
+- Added focused controller-level coverage for the new expense summary/filter/detail behavior and the org rollback compensation paths in the existing PHP harness.
+
+### Files Changed
+- `backend/Api/VyRestExpenses.php`
+- `backend/Api/OrgUsersController.php`
+- `app/src/modules/expenses/api.js`
+- `app/src/modules/expenses/hooks.js`
+- `app/src/modules/expenses/ExpensesPage.jsx`
+- `app/src/modules/expenses/ExpensesList.jsx`
+- `app/src/modules/expenses/ExpenseDetail.jsx`
+- `app/src/pages/Home.jsx`
+- `app/src/theme.css`
+- `tests/ExpenseControllerTest.php`
+- `tests/OrgUsersControllerTest.php`
+- `tests/TestWpEnvironment.php`
+- `ai-workflow/AI_MASTER_BRIEF.md`
+- `ai-workflow/AI_FILE_MAP.md`
+- `ai-workflow/AI_FEATURE_BACKLOG.md`
+- `ai-workflow/AI_NEXT_ACTIONS.md`
+- `ai-workflow/AI_TECH_DEBT.md`
+- `ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+- `php -l` passed on:
+  - `backend/Api/VyRestExpenses.php`
+  - `backend/Api/OrgUsersController.php`
+  - `tests/TestWpEnvironment.php`
+  - `tests/ExpenseControllerTest.php`
+  - `tests/OrgUsersControllerTest.php`
+- `composer test` in `plugins/khatabook` passed with `46 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+
+### Workflow Updates
+- Marked `P2-08`, `P2-09`, and `P2-10` complete.
+- Added `P2-11`, `P2-12`, and `P2-13` as the new next safe queue for payables completion and shared-state normalization.
+- Updated the master brief, file map, and tech debt notes so future runs treat vendor-bill visibility and dashboard receivables summary alignment as active baseline behavior rather than open gaps.
+
+### Remaining Risks / Follow-Up
+- Unpaid expenses and vendor bills still need a true later settlement flow.
+- Payables reporting is still thinner than receivables reporting.
+- Home and CompanySettings still keep more bespoke fetch/state handling than the normalized module screens.
+
 ## 2026-04-06 - Recurring Billing, Invoice Adjustments, And Promise Tracking
 
 ### Summary
@@ -569,3 +716,55 @@ Each entry should include:
 - Dashboard receivables are still derived from the latest 100 `SENT` invoices and latest 100 `PARTIAL` invoices, so very high-volume orgs can still undercount totals on the home screen.
 - Contacts currently support archive only, not restore.
 - Unpaid expenses still do not have a later “record payment” path after initial creation.
+
+## 2026-04-10 - Billing Health, Owner Brief, And Invoice Risk Checks
+
+### Summary
+- Attempted the next roadmap queue in order and confirmed OCR bill extraction is blocked in the current repository because there is still no expense-file attachment path or OCR/parser dependency to build on safely.
+- Completed the next three safe tasks instead: billing health scoring, the owner daily brief, and rule-based invoice risk checks.
+- Kept the implementation inside the existing `vy_*` reporting and invoice-detail architecture, then extended the PHP harness to protect the new backend behavior.
+
+### Files Changed
+
+- `plugins/khatabook/backend/Helpers/ReportHelper.php`
+- `plugins/khatabook/backend/Helpers/InvoiceRiskHelper.php`
+- `plugins/khatabook/backend/Api/VyRestReports.php`
+- `plugins/khatabook/backend/Api/VyRestInvoices.php`
+- `plugins/khatabook/main.php`
+- `plugins/khatabook/app/src/pages/Home.jsx`
+- `plugins/khatabook/app/src/modules/reports/api.js`
+- `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceDetail.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
+- `plugins/khatabook/app/src/theme.css`
+- `plugins/khatabook/tests/bootstrap.php`
+- `plugins/khatabook/tests/ReportsControllerTest.php`
+- `plugins/khatabook/tests/InvoiceControllerTest.php`
+- `plugins/khatabook/ai-workflow/AI_MASTER_BRIEF.md`
+- `plugins/khatabook/ai-workflow/AI_FILE_MAP.md`
+- `plugins/khatabook/ai-workflow/AI_FEATURE_BACKLOG.md`
+- `plugins/khatabook/ai-workflow/AI_NEXT_ACTIONS.md`
+- `plugins/khatabook/ai-workflow/AI_TECH_DEBT.md`
+- `plugins/khatabook/ai-workflow/AI_CHANGELOG.md`
+
+### Validation
+
+- `php -l` passed on:
+  - `plugins/khatabook/backend/Helpers/InvoiceRiskHelper.php`
+  - `plugins/khatabook/backend/Helpers/ReportHelper.php`
+  - `plugins/khatabook/backend/Api/VyRestReports.php`
+  - `plugins/khatabook/backend/Api/VyRestInvoices.php`
+- `composer test` in `plugins/khatabook` passed with `51 passed, 0 failed`
+- `npm run build` in `plugins/khatabook/app` passed
+
+### Workflow Updates
+
+- Marked OCR bill extraction blocked with code-backed evidence instead of leaving it as the default next task.
+- Marked billing health, owner daily brief, and invoice risk engine complete.
+- Advanced the default-safe execution queue to the revenue leak detector.
+
+### Remaining Risks / Follow-Up
+
+- OCR bill extraction still needs an explicit attachment/OCR dependency direction before it becomes safe active work.
+- Home and reports still fan out through multiple report/dashboard requests rather than a single aggregated backend endpoint.
+- The owner daily brief is currently a live dashboard/report surface, not a scheduled outbound digest.

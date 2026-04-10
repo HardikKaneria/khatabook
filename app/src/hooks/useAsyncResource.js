@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 export default function useAsyncResource(asyncFn, deps) {
     const [data, setData] = useState(null);
@@ -34,7 +34,23 @@ export default function useAsyncResource(asyncFn, deps) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, deps);
 
-    const refresh = () => asyncFn().then(setData).catch(setError);
+    const refresh = useCallback(() => {
+        setLoading(true);
+        setError(null);
+
+        return asyncFn()
+            .then((result) => {
+                setData(result);
+                return result;
+            })
+            .catch((err) => {
+                setError(err);
+                throw err;
+            })
+            .finally(() => {
+                setLoading(false);
+            });
+    }, [asyncFn]);
 
     return { data, loading, error, refresh };
 }

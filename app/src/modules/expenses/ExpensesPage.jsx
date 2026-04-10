@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { createExpense } from "./api";
-import { useExpenses } from "./hooks";
+import { useExpenseSummary, useExpenses } from "./hooks";
 import ExpensesList from "./ExpensesList.jsx";
 import ExpenseForm from "./ExpenseForm.jsx";
 import { useAccounts } from "../accounts/hooks";
@@ -21,6 +21,10 @@ export default function ExpensesPage() {
             category: "",
             document_type: "ALL",
             status: "ACTIVE",
+            payment_state: "ALL",
+            due_state: "ALL",
+            page: 1,
+            per_page: 10,
         };
     });
     const [refreshKey, setRefreshKey] = useState(0);
@@ -29,6 +33,11 @@ export default function ExpensesPage() {
     const [actionError, setActionError] = useState("");
 
     const { data, loading, error } = useExpenses(filters, refreshKey);
+    const summaryFilters = useMemo(() => {
+        const { page, per_page, ...rest } = filters;
+        return rest;
+    }, [filters]);
+    const { data: summary, loading: summaryLoading, error: summaryError } = useExpenseSummary(summaryFilters, refreshKey);
     const { data: accounts = [] } = useAccounts({}, refreshKey);
 
     const expenses = useMemo(() => {
@@ -38,6 +47,8 @@ export default function ExpensesPage() {
         if (Array.isArray(data?.data)) return data.data;
         return [];
     }, [data]);
+    const pagination = data?.pagination || { page: filters.page, per_page: filters.per_page, total: expenses.length };
+    const totalPages = Math.max(1, Math.ceil((pagination.total || 0) / (pagination.per_page || filters.per_page || 10)));
 
     const moneyAccounts = useMemo(() => (accounts || []).filter(isMoneyAccount), [accounts]);
     const expenseAccounts = useMemo(() => (accounts || []).filter(isExpenseAccount), [accounts]);
@@ -55,7 +66,18 @@ export default function ExpensesPage() {
     };
 
     const handleFilterChange = (key) => (event) => {
-        setFilters((prev) => ({ ...prev, [key]: event.target.value }));
+        const value = event.target.value;
+        setFilters((prev) => {
+            if (key === "document_type") {
+                return {
+                    ...prev,
+                    document_type: value,
+                    due_state: value === "EXPENSE" ? "ALL" : prev.due_state,
+                    page: 1,
+                };
+            }
+            return { ...prev, [key]: value, page: 1 };
+        });
     };
 
     const handleCreateExpense = async (payload) => {
@@ -63,6 +85,7 @@ export default function ExpensesPage() {
             setActionError("");
             await createExpense(payload);
             setShowForm(false);
+            setFilters((prev) => ({ ...prev, page: 1 }));
             setRefreshKey((value) => value + 1);
         } catch (err) {
             setActionError(err?.message || "Unable to save expense.");
@@ -87,11 +110,38 @@ export default function ExpensesPage() {
                 </div>
             </header>
 
+            <section className="expenses-summary-grid">
+                <article className="expenses-summary-card">
+                    <span className="expenses-summary-label">Matching Records</span>
+                    <strong>{summaryLoading ? "…" : (summary?.total_records || 0)}</strong>
+                    <p>{summaryLoading ? "Refreshing totals…" : `₹ ${formatCurrency(summary?.total_amount || 0)} across the current filters`}</p>
+                </article>
+                <article className="expenses-summary-card">
+                    <span className="expenses-summary-label">Open Bills</span>
+                    <strong>{summaryLoading ? "…" : (summary?.open_bill_count || 0)}</strong>
+                    <p>{summaryLoading ? "Refreshing totals…" : `₹ ${formatCurrency(summary?.open_bill_amount || 0)} still payable`}</p>
+                </article>
+                <article className="expenses-summary-card">
+                    <span className="expenses-summary-label">Overdue Bills</span>
+                    <strong>{summaryLoading ? "…" : (summary?.overdue_bill_count || 0)}</strong>
+                    <p>{summaryLoading ? "Refreshing totals…" : `₹ ${formatCurrency(summary?.overdue_bill_amount || 0)} already overdue`}</p>
+                </article>
+                <article className="expenses-summary-card">
+                    <span className="expenses-summary-label">Paid Records</span>
+                    <strong>{summaryLoading ? "…" : (summary?.paid_count || 0)}</strong>
+                    <p>{summaryLoading ? "Refreshing totals…" : `₹ ${formatCurrency(summary?.paid_amount || 0)} already settled`}</p>
+                </article>
+            </section>
+
+            {summaryError ? (
+                <InlineNotice message={summaryError?.message || "Unable to refresh expense summary."} />
+            ) : null}
+
             <section className="expenses-card">
                 <div className="expenses-card-header">
                     <div>
                         <h3>Filters</h3>
-                        <p>Use date range and category to narrow down expenses.</p>
+                        <p>Filter expenses and vendor bills by date, due state, and settlement status.</p>
                     </div>
                 </div>
                 <div className="expenses-filter-row">
@@ -127,17 +177,66 @@ export default function ExpensesPage() {
                             <option value="ALL">All</option>
                         </select>
                     </div>
+                    <div className="field">
+                        <label>Payment</label>
+                        <select value={filters.payment_state} onChange={handleFilterChange("payment_state")}>
+                            <option value="ALL">All</option>
+                            <option value="UNPAID">Unpaid</option>
+                            <option value="PAID">Paid</option>
+                        </select>
+                    </div>
+                    <div className="field">
+                        <label>Bill Due State</label>
+                        <select
+                            value={filters.due_state}
+                            onChange={handleFilterChange("due_state")}
+                            disabled={filters.document_type === "EXPENSE"}
+                        >
+                            <option value="ALL">All Bills</option>
+                            <option value="OVERDUE">Overdue</option>
+                            <option value="DUE_TODAY">Due Today</option>
+                            <option value="UPCOMING">Upcoming</option>
+                        </select>
+                    </div>
                 </div>
             </section>
 
             <section className="expenses-card">
-                <div className="expenses-card-header">
+                <div className="expenses-card-header contacts-card-header--split">
                     <div>
                         <h3>Expense List</h3>
-                        <p>Select an expense row to view details.</p>
+                        <p>Select a record to review bill due state, payment visibility, and history.</p>
                     </div>
+                    <span className="kb-muted">
+                        Page {pagination.page || 1} of {totalPages}
+                    </span>
                 </div>
                 <ExpensesList expenses={expenses} loading={loading} error={error} onSelectExpense={goToExpense} />
+
+                {!loading && !error ? (
+                    <div className="contacts-pagination">
+                        <button
+                            type="button"
+                            className="kb-btn kb-btn--ghost"
+                            disabled={(pagination.page || 1) <= 1}
+                            onClick={() => setFilters((prev) => ({ ...prev, page: Math.max(1, (prev.page || 1) - 1) }))}
+                        >
+                            Previous
+                        </button>
+                        <span className="kb-muted">
+                            Showing {(expenses.length ? ((pagination.page - 1) * pagination.per_page) + 1 : 0)}-
+                            {Math.min((pagination.page || 1) * (pagination.per_page || filters.per_page || 10), pagination.total || 0)} of {pagination.total || 0}
+                        </span>
+                        <button
+                            type="button"
+                            className="kb-btn kb-btn--ghost"
+                            disabled={(pagination.page || 1) >= totalPages}
+                            onClick={() => setFilters((prev) => ({ ...prev, page: Math.min(totalPages, (prev.page || 1) + 1) }))}
+                        >
+                            Next
+                        </button>
+                    </div>
+                ) : null}
             </section>
 
             {showForm && (

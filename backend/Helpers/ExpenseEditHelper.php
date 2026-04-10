@@ -27,8 +27,10 @@ if (!function_exists('vy_expense_edit_state')) {
             return [
                 'can_edit'            => false,
                 'can_archive'         => false,
+                'can_settle'          => false,
                 'edit_reason'         => 'Archived expenses can no longer be edited.',
                 'archive_reason'      => 'This expense is already archived.',
+                'settle_reason'       => 'Archived expenses cannot be settled.',
             ];
         }
 
@@ -36,16 +38,20 @@ if (!function_exists('vy_expense_edit_state')) {
             return [
                 'can_edit'            => false,
                 'can_archive'         => false,
+                'can_settle'          => false,
                 'edit_reason'         => 'Expenses with recorded payment journals can no longer be edited.',
                 'archive_reason'      => 'Expenses with recorded payment journals cannot be archived.',
+                'settle_reason'       => 'Payment has already been recorded for this expense.',
             ];
         }
 
         return [
             'can_edit'        => true,
             'can_archive'     => true,
+            'can_settle'      => true,
             'edit_reason'     => null,
             'archive_reason'  => null,
+            'settle_reason'   => null,
         ];
     }
 }

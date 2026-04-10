@@ -89,3 +89,30 @@ kbs_test('otp verify authenticates approved users and consumes the active login 
     kbs_assert_same(false, get_transient($transientKey), 'The OTP transient should be consumed after successful verification.');
     kbs_assert_true((string) get_user_meta(102, 'auth_token', true) !== '', 'The issued auth token should be stored for the user.');
 });
+
+kbs_test('send otp uses the dedicated otp email template with a prominent passcode block', function (): void {
+    kbs_test_add_user([
+        'ID' => 103,
+        'user_email' => 'otp-template@example.com',
+        'display_name' => 'OTP Template User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_user_meta(103, 'kbs_account_status', 'approved');
+
+    $request = kbs_test_make_request('POST', '/kbs/v1/send-otp', [
+        'email' => 'otp-template@example.com',
+        'context' => 'login',
+    ]);
+
+    $result = OtpAuth::send_otp($request);
+    $response = kbs_assert_response($result, 200);
+    $data = $response->get_data();
+
+    kbs_assert_same('sent', $data['status'] ?? null);
+
+    $mail = kbs_test_last_mail();
+    kbs_assert_same('Your Vyavhar OTP Code', $mail['subject'] ?? null);
+    kbs_assert_true(str_contains((string) ($mail['message'] ?? ''), 'Your one-time passcode'), 'OTP mail should use the dedicated OTP heading.');
+    kbs_assert_true(str_contains((string) ($mail['message'] ?? ''), 'Copy this code'), 'OTP mail should include the copy-friendly code block label.');
+    kbs_assert_true((bool) preg_match('/\b\d{6}\b/', (string) ($mail['message'] ?? '')), 'OTP mail should render a visible six-digit code.');
+});

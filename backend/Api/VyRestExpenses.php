@@ -23,6 +23,12 @@ class VyRestExpenses
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
 
+        register_rest_route(VyRestAccounts::NS, '/expenses/summary', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'get_expense_summary'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
         register_rest_route(VyRestAccounts::NS, '/expenses', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [__CLASS__, 'create_expense'],
@@ -46,6 +52,12 @@ class VyRestExpenses
             'callback'            => [__CLASS__, 'archive_expense'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
+
+        register_rest_route(VyRestAccounts::NS, '/expenses/(?P<id>\d+)/settle', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'settle_expense'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
     }
 
     public static function list_expenses(WP_REST_Request $request)
@@ -53,50 +65,14 @@ class VyRestExpenses
         $org = \vy_get_current_org_id();
         if (is_wp_error($org)) return $org;
 
-        global $wpdb;
-        $table = $wpdb->prefix . 'vy_expenses';
-
-        $where = ['org_id = %d'];
-        $params = [$org];
-
-        if ($from = $request->get_param('from')) {
-            $where[] = 'expense_date >= %s';
-            $params[] = $from;
-        }
-        if ($to = $request->get_param('to')) {
-            $where[] = 'expense_date <= %s';
-            $params[] = $to;
-        }
-        if ($category = $request->get_param('category')) {
-            $where[] = 'category = %s';
-            $params[] = sanitize_text_field($category);
-        }
-        $documentType = self::normalize_document_type($request->get_param('document_type') ?? 'ALL');
-        if ($documentType !== 'ALL') {
-            $where[] = 'document_type = %s';
-            $params[] = $documentType;
-        }
-        $status = strtoupper((string) ($request->get_param('status') ?? ''));
-        if ($status === 'ACTIVE') {
-            $where[] = "status <> 'ARCHIVED'";
-        } elseif ($status === 'ARCHIVED') {
-            $where[] = 'status = %s';
-            $params[] = 'ARCHIVED';
-        }
-
         $page = max(1, (int) ($request->get_param('page') ?? 1));
         $per_page = min(100, max(1, (int) ($request->get_param('per_page') ?? 20)));
         $offset = ($page - 1) * $per_page;
 
-        $sql = "SELECT * FROM {$table} WHERE " . implode(' AND ', $where) . " ORDER BY expense_date DESC, id DESC LIMIT %d OFFSET %d";
-        $params[] = $per_page;
-        $params[] = $offset;
+        [$where, $params] = self::build_expense_filters($request, (int) $org);
 
-        $rows = $wpdb->get_results($wpdb->prepare($sql, ...$params));
-        $count = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(1) FROM {$table} WHERE " . implode(' AND ', array_slice($where, 0)),
-            ...array_slice($params, 0, count($params) - 2)
-        ));
+        $rows = self::fetch_expense_rows($where, $params, $per_page, $offset);
+        $count = self::count_expenses($where, $params);
 
         $contactMap = self::prime_contacts((int) $org, $rows ?: []);
 
@@ -110,6 +86,17 @@ class VyRestExpenses
                 'total'    => $count,
             ],
         ], 200);
+    }
+
+    public static function get_expense_summary(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) return $org;
+
+        [$where, $params] = self::build_expense_filters($request, (int) $org);
+        $rows = self::fetch_expense_rows($where, $params);
+
+        return new WP_REST_Response(self::build_expense_summary($rows, $request), 200);
     }
 
     public static function create_expense(WP_REST_Request $request)
@@ -448,6 +435,135 @@ class VyRestExpenses
         return new WP_REST_Response(['success' => true, 'action' => 'archived'], 200);
     }
 
+    public static function settle_expense(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $expense = self::fetch_expense((int) $org, (int) $request['id']);
+        if (!$expense) {
+            return new WP_Error('vy_not_found', 'Expense not found.', ['status' => 404]);
+        }
+
+        $editState = vy_expense_edit_state($expense);
+        if (!$editState['can_settle']) {
+            return new WP_Error('vy_expense_settlement_locked', $editState['settle_reason'] ?: 'This expense can no longer be settled.', ['status' => 400]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $payFromAccountId = isset($body['pay_from_account_id']) ? (int) $body['pay_from_account_id'] : 0;
+        if ($payFromAccountId <= 0) {
+            return new WP_Error('vy_bad_payment_account', 'A bank, cash, or wallet account is required to record payment.', ['status' => 400]);
+        }
+
+        $paymentAccount = self::fetch_account((int) $org, $payFromAccountId);
+        if (!$paymentAccount || strtoupper((string) ($paymentAccount['status'] ?? 'ACTIVE')) !== 'ACTIVE') {
+            return new WP_Error('vy_bad_payment_account', 'The selected payment account is not available in this organization.', ['status' => 400]);
+        }
+
+        $paymentSubType = strtoupper((string) ($paymentAccount['sub_type'] ?? ''));
+        if (!in_array($paymentSubType, ['BANK', 'CASH', 'WALLET'], true)) {
+            return new WP_Error('vy_bad_payment_account', 'Only bank, cash, or wallet accounts can be used to settle expenses.', ['status' => 400]);
+        }
+
+        $expenseAccountId = !empty($expense['expense_account_id']) ? (int) $expense['expense_account_id'] : 0;
+        if ($expenseAccountId <= 0 || !self::fetch_account((int) $org, $expenseAccountId)) {
+            return new WP_Error('vy_expense_account_missing', 'This expense is missing a valid expense account for settlement.', ['status' => 500]);
+        }
+
+        $settlementDate = self::normalize_date_input($body['date'] ?? null, gmdate('Y-m-d'));
+        $amount = (float) ($expense['amount'] ?? 0);
+        if ($amount <= 0) {
+            return new WP_Error('vy_bad_expense', 'Only expenses with a positive amount can be settled.', ['status' => 400]);
+        }
+
+        $description = trim((string) ($body['description'] ?? ''));
+        if ($description === '') {
+            $description = sprintf(
+                '%s settlement - %s',
+                self::document_type_label((string) ($expense['document_type'] ?? 'EXPENSE')),
+                (string) ($expense['category'] ?? 'Expense')
+            );
+        }
+
+        global $wpdb;
+        $wpdb->query('START TRANSACTION');
+
+        $journal = VyJournalEngine::create_journal_entry([
+            'org_id'        => (int) $org,
+            'date'          => $settlementDate,
+            'type'          => 'EXPENSE',
+            'description'   => $description,
+            'reference'     => !empty($expense['reference_number']) ? (string) $expense['reference_number'] : null,
+            'source_module' => 'expense',
+            'source_id'     => (int) $expense['id'],
+            'lines'         => [
+                [
+                    'account_id' => $expenseAccountId,
+                    'debit'      => $amount,
+                    'credit'     => 0,
+                    'line_memo'  => 'Expense settlement',
+                ],
+                [
+                    'account_id' => $payFromAccountId,
+                    'debit'      => 0,
+                    'credit'     => $amount,
+                    'line_memo'  => 'Expense payment',
+                ],
+            ],
+        ]);
+
+        if (is_wp_error($journal)) {
+            $wpdb->query('ROLLBACK');
+            return $journal;
+        }
+
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'vy_expenses',
+            [
+                'payment_journal_id' => (int) $journal,
+                'updated_at' => current_time('mysql', true),
+            ],
+            [
+                'org_id' => (int) $org,
+                'id' => (int) $expense['id'],
+            ],
+            ['%d', '%s'],
+            ['%d', '%d']
+        );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_expense_payment_update_failed', 'Failed to link the expense payment journal.', ['status' => 500]);
+        }
+
+        $wpdb->query('COMMIT');
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'expense',
+            (int) $expense['id'],
+            'settled',
+            sprintf(
+                'Recorded payment for %s %s',
+                self::document_type_label((string) ($expense['document_type'] ?? 'EXPENSE')),
+                (string) ($expense['category'] ?? '')
+            ),
+            [
+                'lines' => [
+                    'Settlement date: ' . ($settlementDate ?: '—'),
+                    'Paid from: ' . (string) ($paymentAccount['name'] ?? '—'),
+                    'Amount: ' . RecordAuditLogger::money($amount, (string) ($expense['currency'] ?? 'INR')),
+                    'Payment journal: #' . (int) $journal,
+                ],
+            ]
+        );
+
+        return self::get_expense_response((int) $org, (int) $expense['id']);
+    }
+
     private static function ensure_default_expense_account(int $org_id): int
     {
         global $wpdb;
@@ -614,6 +730,12 @@ class VyRestExpenses
             $contactMap[(int) $expense['contact_id']] = self::fetch_contact($org_id, (int) $expense['contact_id']);
         }
         $payload = self::format_expense_payload($expense, $contactMap);
+        $expenseAccount = self::fetch_account_summary($org_id, !empty($expense['expense_account_id']) ? (int) $expense['expense_account_id'] : 0);
+        $paymentAccount = self::fetch_payment_account_summary($org_id, !empty($expense['payment_journal_id']) ? (int) $expense['payment_journal_id'] : 0);
+        $payload['expense_account'] = $expenseAccount;
+        $payload['payment_account'] = $paymentAccount;
+        $payload['pay_from_account_id'] = $paymentAccount['id'] ?? null;
+        $payload['pay_from_account_name'] = $paymentAccount['name'] ?? null;
         $payload['history'] = RecordAuditLogger::list_for_record($org_id, 'expense', $expense_id);
 
         return new WP_REST_Response($payload, 200);
@@ -659,9 +781,229 @@ class VyRestExpenses
             'journal_id'  => $paymentJournalId,
             'can_edit'    => $editState['can_edit'],
             'can_archive' => $editState['can_archive'],
+            'can_settle'  => $editState['can_settle'],
             'edit_block_reason' => $editState['edit_reason'],
             'archive_block_reason' => $editState['archive_reason'],
+            'settle_block_reason' => $editState['settle_reason'],
         ];
+    }
+
+    private static function build_expense_filters(WP_REST_Request $request, int $org_id): array
+    {
+        $where = ['org_id = %d'];
+        $params = [$org_id];
+
+        if ($from = self::normalize_date_input($request->get_param('from'), null)) {
+            $where[] = 'expense_date >= %s';
+            $params[] = $from;
+        }
+        if ($to = self::normalize_date_input($request->get_param('to'), null)) {
+            $where[] = 'expense_date <= %s';
+            $params[] = $to;
+        }
+        if ($category = trim((string) $request->get_param('category'))) {
+            $where[] = 'category = %s';
+            $params[] = sanitize_text_field($category);
+        }
+
+        $documentType = self::normalize_document_type($request->get_param('document_type') ?? 'ALL');
+        if ($documentType !== 'ALL') {
+            $where[] = 'document_type = %s';
+            $params[] = $documentType;
+        }
+
+        $status = strtoupper((string) ($request->get_param('status') ?? ''));
+        if ($status === 'ACTIVE') {
+            $where[] = "status <> 'ARCHIVED'";
+        } elseif ($status === 'ARCHIVED') {
+            $where[] = 'status = %s';
+            $params[] = 'ARCHIVED';
+        }
+
+        $paymentState = self::normalize_payment_state($request->get_param('payment_state') ?? 'ALL');
+        if ($paymentState === 'PAID') {
+            $where[] = 'payment_journal_id IS NOT NULL';
+        } elseif ($paymentState === 'UNPAID') {
+            $where[] = 'payment_journal_id IS NULL';
+        }
+
+        $dueState = self::normalize_due_state($request->get_param('due_state') ?? 'ALL');
+        if ($dueState !== 'ALL') {
+            $today = gmdate('Y-m-d');
+            $where[] = "document_type = 'BILL'";
+            $where[] = "status <> 'ARCHIVED'";
+            $where[] = 'payment_journal_id IS NULL';
+            $where[] = 'due_date IS NOT NULL';
+
+            if ($dueState === 'OVERDUE') {
+                $where[] = 'due_date < %s';
+                $params[] = $today;
+            } elseif ($dueState === 'DUE_TODAY') {
+                $where[] = 'due_date = %s';
+                $params[] = $today;
+            } elseif ($dueState === 'UPCOMING') {
+                $where[] = 'due_date > %s';
+                $params[] = $today;
+            }
+        }
+
+        return [$where, $params];
+    }
+
+    private static function fetch_expense_rows(array $where, array $params, ?int $limit = null, int $offset = 0): array
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_expenses';
+        $sql = "SELECT * FROM {$table} WHERE " . implode(' AND ', $where) . " ORDER BY expense_date DESC, id DESC";
+        if ($limit !== null) {
+            $sql .= ' LIMIT %d OFFSET %d';
+            $params[] = $limit;
+            $params[] = $offset;
+        }
+
+        return $wpdb->get_results($wpdb->prepare($sql, ...$params));
+    }
+
+    private static function count_expenses(array $where, array $params): int
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_expenses';
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT COUNT(1) FROM {$table} WHERE " . implode(' AND ', $where),
+            ...$params
+        ));
+    }
+
+    private static function build_expense_summary(array $rows, WP_REST_Request $request): array
+    {
+        $summary = [
+            'from' => self::normalize_date_input($request->get_param('from'), null),
+            'to' => self::normalize_date_input($request->get_param('to'), null),
+            'total_records' => 0,
+            'total_amount' => 0.0,
+            'expense_count' => 0,
+            'expense_amount' => 0.0,
+            'bill_count' => 0,
+            'bill_amount' => 0.0,
+            'open_bill_count' => 0,
+            'open_bill_amount' => 0.0,
+            'overdue_bill_count' => 0,
+            'overdue_bill_amount' => 0.0,
+            'due_today_bill_count' => 0,
+            'due_today_bill_amount' => 0.0,
+            'paid_count' => 0,
+            'paid_amount' => 0.0,
+            'unpaid_count' => 0,
+            'unpaid_amount' => 0.0,
+        ];
+
+        foreach ($rows as $rowObject) {
+            $row = (array) $rowObject;
+            $summary['total_records']++;
+            $amount = (float) ($row['amount'] ?? 0);
+            $summary['total_amount'] += $amount;
+
+            $documentType = self::normalize_document_type($row['document_type'] ?? 'EXPENSE');
+            $paymentJournalId = !empty($row['payment_journal_id']) ? (int) $row['payment_journal_id'] : null;
+            $paymentState = $paymentJournalId ? 'PAID' : 'UNPAID';
+            $dueState = self::calculate_due_state(
+                $documentType,
+                !empty($row['due_date']) ? (string) $row['due_date'] : null,
+                $paymentJournalId,
+                (string) ($row['status'] ?? 'POSTED')
+            );
+
+            if ($documentType === 'BILL') {
+                $summary['bill_count']++;
+                $summary['bill_amount'] += $amount;
+
+                if ($paymentState === 'UNPAID' && strtoupper((string) ($row['status'] ?? 'POSTED')) !== 'ARCHIVED') {
+                    $summary['open_bill_count']++;
+                    $summary['open_bill_amount'] += $amount;
+                }
+
+                if ($dueState === 'OVERDUE') {
+                    $summary['overdue_bill_count']++;
+                    $summary['overdue_bill_amount'] += $amount;
+                } elseif ($dueState === 'DUE_TODAY') {
+                    $summary['due_today_bill_count']++;
+                    $summary['due_today_bill_amount'] += $amount;
+                }
+            } else {
+                $summary['expense_count']++;
+                $summary['expense_amount'] += $amount;
+            }
+
+            if ($paymentState === 'PAID') {
+                $summary['paid_count']++;
+                $summary['paid_amount'] += $amount;
+            } else {
+                $summary['unpaid_count']++;
+                $summary['unpaid_amount'] += $amount;
+            }
+        }
+
+        foreach ($summary as $key => $value) {
+            if (is_float($value)) {
+                $summary[$key] = round($value, 2);
+            }
+        }
+
+        return $summary;
+    }
+
+    private static function fetch_account(int $org_id, int $account_id): ?array
+    {
+        if ($account_id <= 0) {
+            return null;
+        }
+
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT id, name, type, sub_type, status FROM {$wpdb->prefix}vy_accounts WHERE org_id = %d AND id = %d LIMIT 1",
+            $org_id,
+            $account_id
+        ), ARRAY_A);
+
+        return $row ?: null;
+    }
+
+    private static function fetch_account_summary(int $org_id, int $account_id): ?array
+    {
+        $row = self::fetch_account($org_id, $account_id);
+        if (!$row) {
+            return null;
+        }
+
+        return [
+            'id' => (int) ($row['id'] ?? 0),
+            'name' => (string) ($row['name'] ?? ''),
+            'type' => (string) ($row['type'] ?? ''),
+            'sub_type' => (string) ($row['sub_type'] ?? ''),
+        ];
+    }
+
+    private static function fetch_payment_account_summary(int $org_id, int $journal_id): ?array
+    {
+        if ($journal_id <= 0) {
+            return null;
+        }
+
+        global $wpdb;
+        $row = $wpdb->get_row($wpdb->prepare(
+            "SELECT account_id
+             FROM {$wpdb->prefix}vy_journal_lines
+             WHERE org_id = %d AND journal_id = %d AND credit > 0
+             ORDER BY id ASC
+             LIMIT 1",
+            $org_id,
+            $journal_id
+        ), ARRAY_A);
+        if (!$row || empty($row['account_id'])) {
+            return null;
+        }
+
+        return self::fetch_account_summary($org_id, (int) $row['account_id']);
     }
 
     private static function build_expense_update_audit_lines(array $before, array $after): array
@@ -721,6 +1063,27 @@ class VyRestExpenses
         }
 
         return $documentType === 'BILL' ? 'BILL' : 'EXPENSE';
+    }
+
+    private static function normalize_payment_state($value): string
+    {
+        $paymentState = strtoupper(sanitize_text_field((string) $value));
+        if ($paymentState === 'PAID') {
+            return 'PAID';
+        }
+        if ($paymentState === 'UNPAID') {
+            return 'UNPAID';
+        }
+        return 'ALL';
+    }
+
+    private static function normalize_due_state($value): string
+    {
+        $dueState = strtoupper(sanitize_text_field((string) $value));
+        if (in_array($dueState, ['OVERDUE', 'DUE_TODAY', 'UPCOMING'], true)) {
+            return $dueState;
+        }
+        return 'ALL';
     }
 
     private static function normalize_date_input($value, ?string $fallback = null): ?string

@@ -37,9 +37,33 @@ class VyRestReports
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
 
+        register_rest_route(VyRestAccounts::NS, '/reports/payables-summary', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'payables_summary'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
         register_rest_route(VyRestAccounts::NS, '/reports/monthly-trends', [
             'methods'             => WP_REST_Server::READABLE,
             'callback'            => [__CLASS__, 'monthly_trends'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/reports/billing-health', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'billing_health'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/reports/owner-daily-brief', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'owner_daily_brief'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/reports/revenue-leaks', [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => [__CLASS__, 'revenue_leaks'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
     }
@@ -116,6 +140,19 @@ class VyRestReports
         return new WP_REST_Response($summary, 200);
     }
 
+    public static function payables_summary(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        [$from, $to] = vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
+        $summary = vy_get_payables_summary((int) $org, $from, $to, $request->get_param('as_of'));
+
+        return new WP_REST_Response($summary, 200);
+    }
+
     public static function monthly_trends(WP_REST_Request $request)
     {
         $org = \vy_get_current_org_id();
@@ -125,6 +162,44 @@ class VyRestReports
 
         [$from, $to] = vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
         $summary = vy_get_monthly_document_trends((int) $org, $from, $to);
+
+        return new WP_REST_Response($summary, 200);
+    }
+
+    public static function billing_health(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        [$from, $to] = vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
+        $summary = vy_get_billing_health_score((int) $org, $from, $to, $request->get_param('as_of'));
+
+        return new WP_REST_Response($summary, 200);
+    }
+
+    public static function owner_daily_brief(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $summary = vy_get_owner_daily_brief((int) $org, $request->get_param('as_of'));
+
+        return new WP_REST_Response($summary, 200);
+    }
+
+    public static function revenue_leaks(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        [$from, $to] = \vy_get_date_range_defaults($request->get_param('from'), $request->get_param('to'));
+        $summary = \vy_get_revenue_leak_detector((int) $org, $from, $to, $request->get_param('as_of'));
 
         return new WP_REST_Response($summary, 200);
     }

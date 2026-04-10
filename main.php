@@ -19,6 +19,7 @@ require_once __DIR__ . '/backend/Helpers/InvoiceRenderHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceTemplateRenderHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceFinancialHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceEditHelper.php';
+require_once __DIR__ . '/backend/Helpers/InvoiceRiskHelper.php';
 require_once __DIR__ . '/backend/Helpers/ExpenseEditHelper.php';
 require_once __DIR__ . '/backend/Auth/AuthSessionHelper.php';
 require_once __DIR__ . '/backend/Helpers/InvoiceEmailHelper.php';
@@ -43,7 +44,7 @@ if (!function_exists('kbs_render_email_body')) {
  * Send a transactional email with minimal styling.
  */
 if (!function_exists('kbs_send_email')) {
-    function kbs_send_email(string $to, string $subject, string $message, array $args = []): bool {
+    function kbs_send_email(string|array $to, string $subject, string $message, array $args = []): bool {
         return \KBS\Email\EmailManager::send($to, $subject, $message, $args);
     }
 }

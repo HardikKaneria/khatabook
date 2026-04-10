@@ -372,6 +372,72 @@ class OrgUsersController
         return (int) $user_id;
     }
 
+    private static function first_org_id_for_user(int $user_id): int {
+        global $wpdb;
+        $table = $wpdb->prefix . 'kbs_user_org_roles';
+
+        return (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT org_id
+             FROM {$table}
+             WHERE user_id = %d
+             ORDER BY is_primary DESC, id ASC
+             LIMIT 1",
+            $user_id
+        ));
+    }
+
+    private static function refresh_user_org_meta(int $user_id): void {
+        $activeOrgId = absint(get_user_meta($user_id, 'vy_active_org_id', true));
+        $fallbackOrgId = absint(get_user_meta($user_id, 'org_id', true));
+
+        if ($activeOrgId > 0 && self::org_role_for_user($activeOrgId, $user_id)) {
+            update_user_meta($user_id, 'org_id', $activeOrgId);
+            update_user_meta($user_id, 'vy_active_org_id', $activeOrgId);
+            return;
+        }
+
+        if ($fallbackOrgId > 0 && self::org_role_for_user($fallbackOrgId, $user_id)) {
+            update_user_meta($user_id, 'org_id', $fallbackOrgId);
+            update_user_meta($user_id, 'vy_active_org_id', $fallbackOrgId);
+            return;
+        }
+
+        $nextOrgId = self::first_org_id_for_user($user_id);
+        if ($nextOrgId > 0) {
+            update_user_meta($user_id, 'org_id', $nextOrgId);
+            update_user_meta($user_id, 'vy_active_org_id', $nextOrgId);
+            return;
+        }
+
+        delete_user_meta($user_id, 'org_id');
+        delete_user_meta($user_id, 'vy_active_org_id');
+    }
+
+    private static function cleanup_created_invited_user(int $user_id): void {
+        if ($user_id <= 0) {
+            return;
+        }
+
+        if (!function_exists('wp_delete_user')) {
+            $userApi = rtrim((string) ABSPATH, '/\\') . '/wp-admin/includes/user.php';
+            if (is_readable($userApi)) {
+                require_once $userApi;
+            }
+        }
+
+        if (function_exists('wp_delete_user')) {
+            wp_delete_user($user_id);
+            return;
+        }
+
+        global $wpdb;
+        $wpdb->delete($wpdb->users, ['ID' => $user_id], ['%d']);
+        $wpdb->delete($wpdb->usermeta, ['user_id' => $user_id], ['%d']);
+        delete_user_meta($user_id, 'org_id');
+        delete_user_meta($user_id, 'vy_active_org_id');
+        delete_user_meta($user_id, 'kbs_account_status');
+    }
+
     /** Claim invites after a user exists */
     public static function claim_invites_for_user(int $user_id, string $email): void {
         global $wpdb;
@@ -383,13 +449,27 @@ class OrgUsersController
         ));
         if (!$invites) return;
 
+        $wpdb->query('START TRANSACTION');
+        $claimed = false;
         foreach ($invites as $i) {
             $role = self::normalize_role($i->role ?? null);
             $membership = self::ensure_membership((int) $i->org_id, $user_id, $role);
             if (is_wp_error($membership)) {
-                continue;
+                $wpdb->query('ROLLBACK');
+                return;
             }
-            $wpdb->update($table, ['status' => 'accepted'], ['id' => (int) $i->id], ['%s'], ['%d']);
+            $updated = $wpdb->update($table, ['status' => 'accepted'], ['id' => (int) $i->id], ['%s'], ['%d']);
+            if ($updated === false) {
+                $wpdb->query('ROLLBACK');
+                return;
+            }
+            $claimed = true;
+        }
+
+        $wpdb->query('COMMIT');
+
+        if ($claimed) {
+            self::refresh_user_org_meta($user_id);
         }
     }
 
@@ -489,9 +569,13 @@ class OrgUsersController
 
         $role = self::normalize_role($invite->role ?? null);
         $user = get_user_by('email', $invite->email);
+        $createdUser = false;
         $user_id = $user ? (int) $user->ID : self::create_user_for_invite($invite->email, $role);
         if (is_wp_error($user_id)) {
             return $user_id;
+        }
+        if (!$user) {
+            $createdUser = true;
         }
 
         $table = $wpdb->prefix . 'kbs_org_invites';
@@ -525,6 +609,9 @@ class OrgUsersController
             $wpdb->query('COMMIT');
         } catch (\Throwable $e) {
             $wpdb->query('ROLLBACK');
+            if ($createdUser) {
+                self::cleanup_created_invited_user((int) $user_id);
+            }
             return new WP_Error('invite_accept_failed', 'Failed to accept invite: ' . $e->getMessage(), ['status' => 500]);
         }
 
@@ -563,6 +650,7 @@ class OrgUsersController
     public static function invite_user(WP_REST_Request $request): WP_REST_Response|WP_Error {
         $perm = self::can_manage_org($request);
         if ($perm instanceof WP_Error) return $perm;
+        global $wpdb;
 
         $org_id = absint($request->get_param('org_id'));
         $email  = sanitize_email($request->get_param('email'));
@@ -613,7 +701,7 @@ class OrgUsersController
                 $org_name,
                 $role
             );
-            $subject = sprintf('[%s] Access granted', get_bloginfo('name'));
+            $subject = sprintf('[%s] Access granted', \KBS\Email\EmailManager::brand_name());
             $login_url = home_url('/login');
             if (function_exists('kbs_send_email')) {
                 \kbs_send_email(
@@ -634,7 +722,6 @@ class OrgUsersController
         }
 
         // Else create an invite
-        global $wpdb;
         $table = $wpdb->prefix . 'kbs_org_invites';
         $token = bin2hex(random_bytes(16));
         $expires_at = gmdate('Y-m-d H:i:s', time() + 7 * DAY_IN_SECONDS);
@@ -677,7 +764,7 @@ class OrgUsersController
         $wpdb->query('COMMIT');
 
         // Send invitation
-        $subject = sprintf('[%s] You have been invited', get_bloginfo('name'));
+        $subject = sprintf('[%s] You have been invited', \KBS\Email\EmailManager::brand_name());
         $accept_url = self::build_accept_url($token, $email);
         $body = sprintf(
             "You've been invited to join %s with the role %s.\nUse the button below to accept the invitation. The link expires in 7 days.",
@@ -796,7 +883,7 @@ class OrgUsersController
             if (function_exists('kbs_send_email')) {
                 \kbs_send_email(
                     $row->email,
-                    '['.get_bloginfo('name').'] Invitation reminder',
+                    '[' . \KBS\Email\EmailManager::brand_name() . '] Invitation reminder',
                     sprintf('Here is your reminder to join %s.', $org_name),
                     [
                         'greeting'  => 'Hello,',
@@ -805,7 +892,7 @@ class OrgUsersController
                     ]
                 );
             } else {
-                wp_mail($row->email, '['.get_bloginfo('name').'] Invitation reminder', "Accept invite: {$accept_url}");
+                wp_mail($row->email, '[' . \KBS\Email\EmailManager::brand_name() . '] Invitation reminder', "Accept invite: {$accept_url}");
             }
             return new WP_REST_Response(['resent' => true], 200);
         }
@@ -824,7 +911,7 @@ class OrgUsersController
             if (function_exists('kbs_send_email')) {
                 \kbs_send_email(
                     $row->email,
-                    '['.get_bloginfo('name').'] Invitation reminder',
+                    '[' . \KBS\Email\EmailManager::brand_name() . '] Invitation reminder',
                     sprintf('Here is your reminder to join %s.', $org_name),
                     [
                         'greeting'  => 'Hello,',
@@ -833,7 +920,7 @@ class OrgUsersController
                     ]
                 );
             } else {
-                wp_mail($row->email, '['.get_bloginfo('name').'] Invitation reminder', "Accept invite: {$accept_url}");
+                wp_mail($row->email, '[' . \KBS\Email\EmailManager::brand_name() . '] Invitation reminder', "Accept invite: {$accept_url}");
             }
             return new WP_REST_Response(['resent' => true], 200);
         }
@@ -906,6 +993,7 @@ class OrgUsersController
             return new WP_Error('org_member_delete_failed', 'Failed to remove the user from the organization.', ['status' => 500]);
         }
         $wpdb->query('COMMIT');
+        self::refresh_user_org_meta($user_id);
 
         return new WP_REST_Response(['deleted' => true], 200);
     }

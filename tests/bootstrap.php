@@ -129,6 +129,7 @@ require dirname(__DIR__) . '/backend/Helpers/InvoiceRenderHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceTemplateRenderHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceFinancialHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/InvoiceEditHelper.php';
+require dirname(__DIR__) . '/backend/Helpers/InvoiceRiskHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/ExpenseEditHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/ReportHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/OrgHelper.php';
@@ -136,6 +137,20 @@ require dirname(__DIR__) . '/backend/Auth/AuthSessionHelper.php';
 require dirname(__DIR__) . '/backend/Helpers/OrgMembershipHelper.php';
 
 $GLOBALS['kbs_tests'] = [];
+
+if (!function_exists('kbs_render_email_body')) {
+    function kbs_render_email_body(string $message, array $args = []): string
+    {
+        return \KBS\Email\EmailManager::render($message, $args);
+    }
+}
+
+if (!function_exists('kbs_send_email')) {
+    function kbs_send_email(string|array $to, string $subject, string $message, array $args = []): bool
+    {
+        return \KBS\Email\EmailManager::send($to, $subject, $message, $args);
+    }
+}
 
 function kbs_test(string $name, callable $callback): void
 {
@@ -175,6 +190,16 @@ function kbs_assert_count(int $expected, array $actual, string $message = ''): v
     if (count($actual) !== $expected) {
         throw new RuntimeException($message ?: sprintf('Expected count %d, got %d.', $expected, count($actual)));
     }
+}
+
+function kbs_test_last_mail(): array
+{
+    $mails = $GLOBALS['kbs_test_mail'] ?? [];
+    if (!$mails) {
+        throw new RuntimeException('Expected at least one captured mail message.');
+    }
+
+    return $mails[array_key_last($mails)];
 }
 
 function kbs_assert_wp_error($value, ?string $code = null, ?int $status = null): WP_Error

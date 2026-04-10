@@ -426,3 +426,131 @@ kbs_test('invoice payment rolls back journal writes when payment persistence fai
     kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines'), 'Failed payment writes should roll back journal lines.');
     kbs_assert_same('SENT', kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoices')[0]['status'] ?? null);
 });
+
+kbs_test('invoice detail exposes rule-based risk flags before send or PDF actions', function (): void {
+    kbs_test_add_user([
+        'ID' => 307,
+        'user_email' => 'risk@example.com',
+        'display_name' => 'Risk User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(307);
+    kbs_test_set_user_meta(307, 'vy_active_org_id', 37);
+    kbs_test_seed_org_membership(307, 37, 'company_admin', true, 'Risk Org');
+
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoices', [
+        [
+            'id' => 9,
+            'org_id' => 37,
+            'contact_id' => null,
+            'invoice_number' => 'INV-RISK-001',
+        'customer_name' => 'Risk Customer',
+        'customer_email' => '',
+        'customer_phone' => '9990001111',
+        'date' => '2020-04-01',
+        'due_date' => '2020-04-05',
+            'currency' => 'INR',
+            'subtotal' => 1000.0,
+            'tax_total' => 0.0,
+            'total' => 1500.0,
+            'status' => 'DRAFT',
+            'template_id' => 'minimal-clean',
+            'notes' => '',
+            'pdf_url' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 10,
+            'org_id' => 37,
+            'contact_id' => null,
+            'invoice_number' => 'INV-HIST-001',
+            'customer_name' => 'Risk Customer',
+            'customer_email' => 'risk-history@example.com',
+            'customer_phone' => '',
+            'date' => '2026-03-01',
+            'due_date' => '2026-03-08',
+            'currency' => 'INR',
+            'subtotal' => 400.0,
+            'tax_total' => 0.0,
+            'total' => 400.0,
+            'status' => 'PAID',
+            'template_id' => 'minimal-clean',
+            'notes' => '',
+            'pdf_url' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 11,
+            'org_id' => 37,
+            'contact_id' => null,
+            'invoice_number' => 'INV-HIST-002',
+            'customer_name' => 'Risk Customer',
+            'customer_email' => 'risk-history@example.com',
+            'customer_phone' => '',
+            'date' => '2026-02-15',
+            'due_date' => '2026-02-22',
+            'currency' => 'INR',
+            'subtotal' => 450.0,
+            'tax_total' => 0.0,
+            'total' => 450.0,
+            'status' => 'PAID',
+            'template_id' => 'minimal-clean',
+            'notes' => '',
+            'pdf_url' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 12,
+            'org_id' => 37,
+            'contact_id' => null,
+            'invoice_number' => 'INV-HIST-003',
+            'customer_name' => 'Risk Customer',
+            'customer_email' => 'risk-history@example.com',
+            'customer_phone' => '',
+            'date' => '2026-01-10',
+            'due_date' => '2026-01-17',
+            'currency' => 'INR',
+            'subtotal' => 500.0,
+            'tax_total' => 0.0,
+            'total' => 500.0,
+            'status' => 'PAID',
+            'template_id' => 'minimal-clean',
+            'notes' => '',
+            'pdf_url' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+    ]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoice_items', [
+        [
+            'id' => 1,
+            'org_id' => 37,
+            'invoice_id' => 9,
+            'description' => 'Retainer',
+            'quantity' => 1,
+            'unit_price' => 1000.0,
+            'tax_rate' => 0.0,
+            'tax_amount' => 0.0,
+            'tax_type' => 'GST',
+            'line_total' => 1000.0,
+            'created_at' => current_time('mysql'),
+        ],
+    ]);
+
+    $detail = VyRestInvoices::get_invoice(kbs_test_make_request('GET', '/vy/v1/invoices/9', ['id' => 9]));
+    $response = kbs_assert_response($detail, 200);
+    $data = $response->get_data();
+
+    kbs_assert_same('critical', $data['risk_summary']['level'] ?? null);
+    kbs_assert_same(false, $data['risk_summary']['ready_to_send'] ?? true);
+    kbs_assert_true((int) ($data['risk_summary']['issue_count'] ?? 0) >= 3, 'Risk summary should expose multiple actionable checks.');
+
+    $codes = array_map(static fn(array $issue): string => (string) ($issue['code'] ?? ''), $data['risk_summary']['issues'] ?? []);
+    kbs_assert_true(in_array('total_mismatch', $codes, true), 'Invoice risk checks should flag stored-total mismatch.');
+    kbs_assert_true(in_array('missing_customer_email', $codes, true), 'Invoice risk checks should flag a missing customer email.');
+    kbs_assert_true(in_array('draft_past_due', $codes, true), 'Invoice risk checks should flag stale draft due dates.');
+    kbs_assert_true(in_array('amount_anomaly', $codes, true), 'Invoice risk checks should flag unusual totals for the same customer.');
+});

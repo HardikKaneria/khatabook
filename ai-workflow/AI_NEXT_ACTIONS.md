@@ -21,23 +21,23 @@ It exists to answer:
 
 Unless the user explicitly overrides it, work in this order:
 
-1. Build vendor bills / purchase-bill workflow on the current expense/vendor foundations.
-2. Replace Home dashboard receivables shortcuts with the server-side receivables summary.
-3. Add rollback discipline to org member and invite writes.
-4. Add later settlement flow for unpaid expenses and bills.
-5. Keep blocked decision work out of active execution unless the user explicitly re-prioritizes it.
+1. Fix the confirmed `ExpensesPage.jsx` runtime crash.
+2. Restore safe account lifecycle actions without breaking journal history.
+3. Prevent duplicate invoice payment posting, then align payment-action visibility with live fully-paid state.
+4. Only after those P0 operational gaps are closed, consider paid-invoice cancel/refund work.
+5. Keep AI invoice assistant, OCR, and blocked decision work out of active execution unless the dependency/product direction is explicitly approved.
 
 ---
 
 ## 2. Best Next Run
 
 ### Primary Task
-Build vendor bills / purchase-bill workflow on the current expense/vendor foundations.
+Fix the confirmed Expenses page runtime crash.
 
 ### Why this should go first
-- Recurring billing, credit/debit notes, and promise-to-pay tracking are now complete on the active invoice model.
-- The largest remaining business-control gap is payables maturity: expenses exist, but a true vendor-bill workflow is still missing.
-- The contacts, expense, journal, and reporting foundations are now strong enough to extend payables without reopening legacy schema work.
+- `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx` still renders summary cards with `formatCurrency(...)` but does not define or import that helper.
+- This is a hard runtime failure on an already-live core module, so it outranks lower-severity quality improvements and roadmap work.
+- The fix is small, repo-grounded, and should be completed before any broader financial UX work continues.
 
 ### Required reading before coding
 Read these workflow files first:
@@ -48,34 +48,31 @@ Read these workflow files first:
 - `ai-workflow/AI_IMPLEMENTATION_PLAYBOOK.md`
 
 Then inspect these current code files:
-- `plugins/khatabook/backend/Api/VyRestExpenses.php`
-- `plugins/khatabook/backend/Api/VyRestContacts.php`
-- `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
-- `plugins/khatabook/backend/Helpers/ExpenseEditHelper.php`
-- `plugins/khatabook/backend/Db/TableManager.php`
-- `plugins/khatabook/backend/Helpers/ReportHelper.php`
-- `plugins/khatabook/app/src/modules/expenses/*`
-- `plugins/khatabook/app/src/modules/contacts/*`
-- current expense, contact, report, and journal tests in `plugins/khatabook/tests/*`
+- `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx`
+- `plugins/khatabook/app/src/modules/expenses/ExpensesList.jsx`
+- `plugins/khatabook/app/src/modules/expenses/hooks.js`
+- `plugins/khatabook/app/src/modules/expenses/api.js`
+- `plugins/khatabook/app/src/theme.css`
+- current expense-related tests in `plugins/khatabook/tests/*`
 
 ### Exact target coverage for this run
-Add vendor bills without redesigning the payables model:
+Fix the crash without changing expense behavior beyond the runtime repair:
 
-- inspect the current expense model, vendor contact usage, payment timing, and journal rules first
-- build on `vy_*` expenses and contacts only
-- define the minimum vendor-bill lifecycle that fits current product behavior
-- make due-state and payment-state visibility operational without inventing a second disconnected expense system
+- trace where summary-card currency formatting should come from
+- restore a local/shared currency helper safely
+- make sure the page still renders live summary totals, filters, and pagination exactly from the current expense APIs
+- add or adjust lightweight test coverage only if there is a practical place in the current harness
 
 ### Constraints
-- Do not move payables work into legacy `kbs_*` business tables.
-- Do not bypass current org authorization, vendor contact resolution, or journal/payment locking behavior.
-- Do not duplicate the expense system with a disconnected bill model.
-- Do not invent deep procurement workflows if the current app only needs the payable bill lifecycle first.
+- Do not redesign the expenses screen.
+- Do not change the live expense summary API shape unless the fix requires it.
+- Do not mix this runtime repair with larger payables UX rewrites.
+- Keep the fix consistent with the shared UI/helper patterns already used in the SPA.
 
 ### Done when
-- vendor bill setup, due tracking, and payment visibility are grounded in the current expense/journal architecture
-- payables behavior is org-safe and journal-safe
-- the UI exposes only the current supported payable workflow
+- the Expenses page loads without throwing `formatCurrency is not defined`
+- summary totals render correctly
+- no new drift is introduced in the expense list/detail flow
 - workflow files are updated after completion
 - `AI_CHANGELOG.md`, `AI_FEATURE_BACKLOG.md`, and `AI_NEXT_ACTIONS.md` are updated
 
@@ -84,84 +81,78 @@ Add vendor bills without redesigning the payables model:
 ## 3. Best Task After That
 
 ### Next Task
-Replace Home dashboard receivables shortcuts with the server-side receivables summary.
+Restore safe account lifecycle actions.
 
-### Why this is the best follow-up after vendor bills
-- the reporting layer already has a server-side receivables summary and aging calculation.
-- Home still uses the latest-100-open-invoices shortcut, which is now one of the clearest live accuracy gaps in the product.
-- this is a contained reliability improvement after the larger payables expansion.
+### Why this is the best follow-up after the Expenses crash fix
+- `VyRestAccounts.php` already supports create, read, and journal-aware delete/archive behavior, but the live accounts surface still lacks safe edit/inactive management.
+- This is operationally important and still stays inside the current accounts/journal architecture.
+- It is safer and more valuable than jumping to AI or OCR roadmap work.
 
 ### Start here
-- `plugins/khatabook/app/src/pages/Home.jsx`
-- `plugins/khatabook/backend/Api/VyRestReports.php`
-- `plugins/khatabook/backend/Helpers/ReportHelper.php`
-- `plugins/khatabook/app/src/modules/reports/api.js`
+- `plugins/khatabook/backend/Api/VyRestAccounts.php`
+- `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
+- `plugins/khatabook/app/src/modules/accounts/api.js`
+- `plugins/khatabook/app/src/modules/accounts/*`
 
 ### Minimum acceptable scope
-- reuse the existing receivables summary endpoint
-- keep the dashboard quick to load and operationally readable
-- preserve current quick actions and recent activity sections
-- remove client-side receivables math that duplicates server business logic
+- enable only safe supported account edits
+- allow inactive/archive behavior for future transactions without corrupting history
+- keep delete rules tied to actual journal usage
+- do not invent a second account model or non-journal shortcut path
 
 ### Done when
-- Home receivables and overdue cards are backed by the server-side summary
-- the dashboard no longer undercounts large orgs because of the earlier latest-100 shortcut
-- the UX remains consistent with current dashboard behavior
+- operators can safely maintain account records without breaking historical journal truth
 
 ---
 
 ## 4. Third Task After That
 
 ### Next Task
-Add rollback discipline to org member and invite writes.
+Prevent duplicate invoice payment recording, then align paid-state CTA visibility.
 
 ### Why this comes here
-- the core financial flows now have explicit transaction boundaries or compensating cleanup, but org-user flows still lag behind.
-- org membership and invite operations are high-impact support workflows and should fail more predictably before more advanced product work resumes.
-- this remains a contained reliability task inside the current org-management architecture.
+- `InvoicePaymentForm.jsx` still submits without a loading/locking state.
+- `VyRestInvoices::pay_invoice()` currently rejects overpayments and already-paid invoices, but it does not add idempotency-style duplicate-submit protection.
+- `InvoiceDetailPage.jsx` still shows the Record Payment CTA whenever the invoice exists, even if `balance_due` is already zero.
 
 ### Start here
-- `plugins/khatabook/backend/Api/OrgUsersController.php`
-- `plugins/khatabook/backend/Helpers/OrgHelper.php`
-- `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
-- current org/user tests in `plugins/khatabook/tests/*`
+- `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
+- `plugins/khatabook/backend/Api/VyRestInvoices.php`
+- `plugins/khatabook/tests/InvoiceControllerTest.php`
 
 ### Minimum acceptable scope
-- inspect add/invite/remove/resend flows before editing
-- add explicit transaction handling or compensating cleanup where practical
-- preserve current permissions and email side effects
-- keep the current UsersAdmin UX contract intact
+- add submit locking and user-visible saving state in the payment modal
+- add backend protection against duplicate submissions
+- ensure fully paid invoices do not expose a live Record Payment action after refresh
+- keep current payment posting, org checks, and journal behavior intact
 
 ### Done when
-- the highest-risk invite/member write flows fail safely without leaving partial org state behind
-- current permissions and email outcomes still match live behavior
-- the org admin UI remains truthful about success and failure states
+- repeated payment submits cannot create duplicate rows
+- paid invoices do not show misleading payment actions
 
 ---
 
 ## 5. Fourth Task After That
 
 ### Next Task
-Add later settlement flow for unpaid expenses.
+Keep AI invoice assistant, OCR, quotations, and other blocked roadmap work blocked until explicitly approved.
 
 ### Why this comes here
-- once vendor bills exist, unpaid expenses/bills still need a safe later payment path.
-- this stays inside the current expense and journal model and closes the remaining payables lifecycle gap documented in tech debt.
+- the repo still has no AI provider/client/config path for an invoice assistant
+- OCR bill extraction still lacks an attachment model and parser dependency
+- quotation direction is still a product decision, not active execution work
 
 ### Start here
-- `plugins/khatabook/backend/Api/VyRestExpenses.php`
-- `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
-- `plugins/khatabook/app/src/modules/expenses/*`
+- `plugins/khatabook/ai-workflow/AI_FEATURE_BACKLOG.md`
+- `plugins/khatabook/ai-workflow/AI_TECH_DEBT.md`
 
 ### Minimum acceptable scope
-- add payment/settlement for existing unpaid expense or bill records
-- preserve journal integrity and current edit/archive rules
-- avoid creating a second payment subsystem
+- do not pull blocked roadmap items forward without explicit approval
+- if one of those items is requested, document the missing dependency or product decision first
 
 ### Done when
-- existing unpaid expenses or bills can be settled safely after initial creation
-- journal integrity and current expense restrictions still hold
-- the UI does not expose unsupported settlement actions
+- the next execution order stays aligned with the real post-payables repository state
 
 ---
 
@@ -175,6 +166,12 @@ Do not build quotation features until there is an explicit decision on whether q
 
 ### Company settings breadth
 Do not re-expand `CompanySettings.jsx` with hidden placeholder sections unless there is a confirmed live consumer for them.
+
+### OCR dependency direction
+OCR bill extraction is currently blocked. The repo still has no expense-file attachment model, no local OCR library, and no parser service to build on. Do not wire cloud OCR providers or external AI parsing APIs into the default implementation unless a run has explicit approval to add that dependency.
+
+### AI dependency direction
+AI invoice assistance is currently blocked. The repo still has no approved AI provider/client/config path in the active plugin architecture. Do not introduce OpenAI or any other external AI dependency by default unless the run explicitly approves that product and operational direction.
 
 ### Legacy business tables
 Do not add new product work on:
@@ -232,9 +229,9 @@ Update these too if architecture or standards changed:
 
 If the main task is blocked by environment, product ambiguity, or missing path clarity, use one of these instead:
 
-- tighten or remove non-essential production console logging
-- extract duplicated frontend async/query helpers without changing behavior
-- improve workflow documentation around blocked decisions
+- restore another confirmed runtime/UI integrity issue on an already-live module
+- tighten invoice payment validation or paid-state CTA truthfulness
+- improve workflow documentation around blocked AI/OCR decisions
 - clarify legacy-vs-active schema notes where the code is easy to misread
 - improve empty/loading/error states on already-active screens
 - tighten validation or logging around an already-active live flow

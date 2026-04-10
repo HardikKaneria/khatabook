@@ -8,6 +8,7 @@ defined('ABSPATH') || exit;
 
 class EmailManager
 {
+    private const DEFAULT_BRAND_NAME = 'Vyavhar';
     private const CONFIG_ENV_KEYS = [
         'host'       => ['KBS_SMTP_HOST', 'BREVO_SMTP_HOST'],
         'port'       => ['KBS_SMTP_PORT', 'BREVO_SMTP_PORT'],
@@ -77,26 +78,52 @@ class EmailManager
 
     public static function render(string $message, array $args = []): string
     {
+        $variant  = sanitize_key((string) ($args['variant'] ?? 'transactional'));
         $greeting = $args['greeting'] ?? '';
         $ctaLabel = $args['cta_label'] ?? '';
         $ctaUrl   = $args['cta_url'] ?? '';
         $footer   = $args['footer'] ?? 'Thanks,<br>Team Vyavhar';
-        $brand    = $args['brand'] ?? get_bloginfo('name', 'display');
+        $brand    = self::brand_name(isset($args['brand']) ? (string) $args['brand'] : null);
+        $eyebrow  = isset($args['eyebrow']) ? sanitize_text_field((string) $args['eyebrow']) : '';
+        $logo_url = self::resolve_logo_url($args['logo_url'] ?? '');
+        $summary_rows = self::normalize_summary_rows($args['summary_rows'] ?? []);
         $site_url = home_url('/');
-        $logo_url = plugin_dir_url(KHATABOOK_PLUGIN_FILE) . 'assets/image/logo.svg';
+
+        if ($variant === 'otp') {
+            return self::render_otp_template($message, [
+                'greeting'     => $greeting,
+                'cta_label'    => $ctaLabel,
+                'cta_url'      => $ctaUrl,
+                'footer'       => $footer,
+                'brand'        => $brand,
+                'eyebrow'      => $eyebrow,
+                'logo_url'     => $logo_url,
+                'site_url'     => $site_url,
+                'otp_code'     => isset($args['otp_code']) ? trim((string) $args['otp_code']) : '',
+                'helper_lines' => is_array($args['helper_lines'] ?? null) ? $args['helper_lines'] : [],
+            ]);
+        }
 
         $body  = '<div style="background:#f8fafc;padding:32px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;">';
         $body .= '<div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:18px;padding:40px 48px;box-shadow:0 25px 65px rgba(15,23,42,0.15);border:1px solid rgba(15,23,42,0.08);">';
         $body .= '<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">';
-        $body .= '<img src="' . esc_url($logo_url) . '" alt="' . esc_attr($brand) . '" style="height:34px;width:auto" />';
+        $body .= '<img src="' . esc_url($logo_url) . '" alt="' . esc_attr($brand) . '" style="height:40px;width:40px;border-radius:12px;object-fit:cover;background:#eef2ff;padding:6px" />';
         $body .= '<span style="font-size:22px;font-weight:700;color:#111827;">' . esc_html($brand) . '</span>';
         $body .= '</div>';
+
+        if ($eyebrow !== '') {
+            $body .= '<p style="margin:0 0 8px;color:#4C2CE9;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;font-weight:700;">' . esc_html($eyebrow) . '</p>';
+        }
 
         if ($greeting) {
             $body .= '<p style="margin:0 0 12px;color:#0f172a;font-size:16px;">' . esc_html($greeting) . '</p>';
         }
 
         $body .= '<div style="color:#1f2937;font-size:15px;line-height:1.6;">' . wp_kses_post(nl2br(esc_html($message))) . '</div>';
+
+        if ($summary_rows) {
+            $body .= self::render_summary_rows_block($summary_rows);
+        }
 
         if ($ctaLabel && $ctaUrl) {
             $body .= sprintf(
@@ -114,12 +141,13 @@ class EmailManager
         return $body;
     }
 
-    public static function send(string $to, string $subject, string $message, array $args = []): bool
+    public static function send(string|array $to, string $subject, string $message, array $args = []): bool
     {
         $html = self::render($message, $args);
         $headers = $args['headers'] ?? [];
         $headers[] = 'Content-Type: text/html; charset=UTF-8';
-        $sent = wp_mail($to, $subject, $html, $headers);
+        $attachments = is_array($args['attachments'] ?? null) ? $args['attachments'] : [];
+        $sent = wp_mail($to, $subject, $html, $headers, $attachments);
         if (!$sent) {
             SystemLogger::log_event(
                 'email_wp_mail_returned_false',
@@ -127,12 +155,23 @@ class EmailManager
                 [
                     'subject_length' => strlen((string) $subject),
                     'has_custom_headers' => !empty($headers),
+                    'has_attachments' => !empty($attachments),
                 ],
                 0,
                 'backend/Email/EmailManager.php'
             );
         }
         return $sent;
+    }
+
+    public static function brand_name(?string $override = null): string
+    {
+        $brand = trim((string) ($override ?? ''));
+        if ($brand !== '') {
+            return sanitize_text_field($brand);
+        }
+
+        return self::DEFAULT_BRAND_NAME;
     }
 
     public static function handle_mail_failure(\WP_Error $wp_error): void
@@ -295,5 +334,117 @@ class EmailManager
             default:
                 return 'Not configured';
         }
+    }
+
+    private static function resolve_logo_url($value): string
+    {
+        $logo = is_string($value) ? esc_url_raw($value) : '';
+        if ($logo !== '') {
+            return $logo;
+        }
+
+        return plugin_dir_url(KHATABOOK_PLUGIN_FILE) . 'assets/image/fav_icon.png';
+    }
+
+    private static function normalize_summary_rows($rows): array
+    {
+        if (!is_array($rows)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
+            $label = sanitize_text_field((string) ($row['label'] ?? ''));
+            $value = wp_strip_all_tags((string) ($row['value'] ?? ''));
+            if ($label === '' || $value === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'label' => $label,
+                'value' => $value,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private static function render_summary_rows_block(array $summary_rows): string
+    {
+        if (!$summary_rows) {
+            return '';
+        }
+
+        $block = '<div style="margin-top:24px;border:1px solid rgba(15,23,42,0.08);border-radius:16px;background:#f8fafc;padding:18px 20px;">';
+        $last_index = count($summary_rows) - 1;
+        foreach ($summary_rows as $index => $row) {
+            $border = $index === $last_index ? '' : 'border-bottom:1px solid rgba(15,23,42,0.08);';
+            $block .= '<div style="display:flex;justify-content:space-between;gap:18px;padding:8px 0;' . $border . '">';
+            $block .= '<span style="color:#6b7280;font-size:13px;">' . esc_html($row['label']) . '</span>';
+            $block .= '<strong style="color:#111827;font-size:14px;text-align:right;">' . esc_html($row['value']) . '</strong>';
+            $block .= '</div>';
+        }
+        $block .= '</div>';
+
+        return $block;
+    }
+
+    private static function render_otp_template(string $message, array $args): string
+    {
+        $greeting = (string) ($args['greeting'] ?? '');
+        $cta_label = (string) ($args['cta_label'] ?? '');
+        $cta_url = (string) ($args['cta_url'] ?? '');
+        $footer = (string) ($args['footer'] ?? 'Thanks,<br>Team Vyavhar');
+        $brand = self::brand_name((string) ($args['brand'] ?? ''));
+        $eyebrow = sanitize_text_field((string) ($args['eyebrow'] ?? 'Secure verification'));
+        $logo_url = self::resolve_logo_url($args['logo_url'] ?? '');
+        $site_url = (string) ($args['site_url'] ?? home_url('/'));
+        $otp_code = preg_replace('/[^0-9A-Za-z]/', '', (string) ($args['otp_code'] ?? ''));
+        $helper_lines = array_values(array_filter(array_map(static function ($line): string {
+            return wp_strip_all_tags((string) $line);
+        }, (array) ($args['helper_lines'] ?? []))));
+
+        $body  = '<div style="background:#eef2ff;padding:32px;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif;">';
+        $body .= '<div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:20px;padding:40px 48px;box-shadow:0 25px 65px rgba(15,23,42,0.14);border:1px solid rgba(15,23,42,0.08);">';
+        $body .= '<div style="display:flex;align-items:center;gap:12px;margin-bottom:24px;">';
+        $body .= '<img src="' . esc_url($logo_url) . '" alt="' . esc_attr($brand) . '" style="height:40px;width:40px;border-radius:12px;object-fit:cover;background:#eef2ff;padding:6px" />';
+        $body .= '<span style="font-size:22px;font-weight:700;color:#111827;">' . esc_html($brand) . '</span>';
+        $body .= '</div>';
+        $body .= '<p style="margin:0 0 8px;color:#4C2CE9;font-size:12px;letter-spacing:0.16em;text-transform:uppercase;font-weight:700;">' . esc_html($eyebrow) . '</p>';
+        if ($greeting !== '') {
+            $body .= '<p style="margin:0 0 12px;color:#0f172a;font-size:16px;">' . esc_html($greeting) . '</p>';
+        }
+        $body .= '<h1 style="margin:0 0 12px;font-size:30px;line-height:1.2;color:#111827;">Your one-time passcode</h1>';
+        $body .= '<div style="color:#1f2937;font-size:15px;line-height:1.6;">' . wp_kses_post(nl2br(esc_html($message))) . '</div>';
+        if ($otp_code !== '') {
+            $body .= '<div style="margin:28px 0 16px;padding:22px 18px;border-radius:18px;background:linear-gradient(135deg,#4C2CE9,#6f58ef);text-align:center;color:#ffffff;">';
+            $body .= '<div style="font-size:12px;letter-spacing:0.18em;text-transform:uppercase;opacity:0.82;margin-bottom:8px;">Copy this code</div>';
+            $body .= '<div style="font-size:34px;font-weight:700;letter-spacing:0.34em;text-indent:0.34em;">' . esc_html($otp_code) . '</div>';
+            $body .= '</div>';
+        }
+        if ($helper_lines) {
+            $body .= '<div style="border:1px solid rgba(15,23,42,0.08);border-radius:16px;background:#f8fafc;padding:16px 18px;">';
+            foreach ($helper_lines as $line) {
+                $body .= '<p style="margin:6px 0;color:#4b5563;font-size:13px;">' . esc_html($line) . '</p>';
+            }
+            $body .= '</div>';
+        }
+        if ($cta_label !== '' && $cta_url !== '') {
+            $body .= sprintf(
+                '<p style="margin:24px 0 10px;"><a href="%s" style="display:inline-block;background:#111827;color:#ffffff;text-decoration:none;padding:13px 24px;border-radius:999px;font-weight:600;">%s</a></p>',
+                esc_url($cta_url),
+                esc_html($cta_label)
+            );
+        }
+        $body .= '<hr style="margin:32px 0;border:none;border-top:1px solid rgba(15,23,42,0.08);" />';
+        $body .= '<p style="color:#6b7280;font-size:13px;margin:0 0 6px;">' . wp_kses_post($footer) . '</p>';
+        $body .= '<a href="' . esc_url($site_url) . '" style="color:#4C2CE9;font-size:13px;text-decoration:none;">' . esc_html(parse_url($site_url, PHP_URL_HOST) ?? $site_url) . '</a>';
+        $body .= '</div></div>';
+
+        return $body;
     }
 }

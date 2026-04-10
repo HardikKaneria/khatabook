@@ -54,8 +54,14 @@ These are active enough to treat as the current working baseline:
 - Payment activity page plus dashboard visibility
 - Record-level history for invoices, expenses, and invoice payments
 - Expense create/list/detail/update/archive
+- Vendor-bill due/payment visibility on the live expense model
+- Later settlement for unpaid expenses and vendor bills on the live expense model
 - Invoice templates, preview, and logo upload
-- Profit, GST, tax, receivables aging, invoice status, and monthly trend reporting
+- Profit, GST, tax, receivables aging, payables aging, status mix, and monthly trend reporting
+- Billing health score with explainable component scoring on live report data
+- Owner daily brief on live invoice, payment, expense, payable, and promise data
+- Rule-based invoice risk checks in invoice detail before email/PDF actions
+- Home and CompanySettings aligned to the shared async/state loading pattern
 
 Do not re-add these as brand new TODO features unless the task is specifically to improve or expand them.
 
@@ -169,7 +175,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - at least one action path is available from each major section
   - loading, empty, and error states exist
 - Notes:
-  Completed on 2026-04-03. The SPA home screen now shows live receivables, recent invoices, recent expenses, money-account balances, tax/profit snapshots, and quick-create actions. A dedicated summary endpoint still does not exist, so receivables are currently derived from the latest 100 sent invoices and latest 100 partial invoices.
+  Completed on 2026-04-03 and tightened on 2026-04-07. The SPA home screen now shows live receivables, recent invoices, recent expenses, money-account balances, tax/profit snapshots, and quick-create actions, with the receivables cards described directly from the live server-side summary instead of the older capped approximation wording.
 
 ---
 
@@ -233,6 +239,175 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - save behavior remains safe and predictable
 - Notes:
   Completed on 2026-04-03. `CompanySettings` now renders only the `company`, `sales`, and `tax` sections with confirmed live readers, includes the report-backed `income_tax_rate` field, and no longer rewrites hidden placeholder categories during “Save All”.
+
+---
+
+## P0-06 — Fix Vyavhar email branding and document email rendering
+- Priority: P0
+- Status: DONE
+- Area: Email / Branding
+- Problem:
+  Outgoing emails still show Khatabook branding instead of Vyavhar, and the logo is not rendering correctly. The current email layout does not feel polished, organized, or brand-correct.
+- Why:
+  Email is a user-facing trust surface. Branding mismatch and broken logo rendering reduce product credibility immediately.
+- Scope:
+  - replace Khatabook naming with Vyavhar across email templates
+  - fix logo rendering in outgoing emails
+  - improve layout spacing, hierarchy, typography, and footer structure
+  - make document/invoice emails look professional and consistent
+  - keep template code maintainable and easy to extend
+- Constraints:
+  - do not change mail delivery behavior
+  - keep existing notification triggers intact
+  - do not introduce developer-facing text into user emails
+- Acceptance Criteria:
+  - all outgoing user-facing emails show Vyavhar branding
+  - logo renders reliably
+  - invoice/document emails look professional and organized
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Email/EmailManager.php` is now the canonical Vyavhar-branded mail shell, invoice emails use that path through `plugins/khatabook/backend/Helpers/InvoiceEmailHelper.php`, document emails carry structured summary rows plus PDF attachments, and user-facing org email subjects no longer fall back to generic site branding.
+
+---
+
+## P0-07 — Create a dedicated OTP email template
+- Priority: P0
+- Status: DONE
+- Area: Email / Auth UX
+- Problem:
+  OTP emails should not reuse the generic transactional email layout. The OTP needs stronger visual emphasis and easier copying.
+- Why:
+  OTP delivery is a high-frequency auth flow. A clearer template improves usability and reduces friction during login and registration.
+- Scope:
+  - create a dedicated OTP email template
+  - render OTP in large, prominent, brand-styled text
+  - apply Vyavhar brand styling and clear hierarchy
+  - add a visible copy action/button where email-client-safe
+  - include concise expiry/help text
+- Constraints:
+  - preserve existing OTP generation and validation logic
+  - avoid unsafe email-client-dependent interactions
+  - ensure graceful fallback when copy interaction is not supported
+- Acceptance Criteria:
+  - OTP emails use a separate template
+  - OTP is visually prominent
+  - the email feels brand-consistent and easier to use
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Auth/OtpAuth.php` now sends OTP mail through the canonical email helper with `variant=otp`, and `plugins/khatabook/backend/Email/EmailManager.php` renders a dedicated Vyavhar OTP template with a prominent passcode block and concise helper text.
+
+---
+
+## P0-08 — Restore safe account lifecycle actions
+- Priority: P0
+- Status: IMPROVE
+- Area: Accounts
+- Problem:
+  Accounts currently cannot be edited, deleted, or marked inactive for future transactions.
+- Why:
+  Financial operations need safe maintenance of account records without allowing unsafe historical mutation.
+- Scope:
+  - enable supported account edit behavior
+  - add inactive/disable behavior for future use
+  - define safe delete rules
+  - block deletion where historical journal integrity would be affected
+  - show clear blocked-state messaging where action is not allowed
+- Constraints:
+  - preserve accounting and journal integrity
+  - do not allow destructive mutation that breaks historical records
+- Acceptance Criteria:
+  - users can edit supported account fields
+  - users can mark accounts inactive for future transactions
+  - deletion behavior is safe, rule-based, and clearly explained
+
+---
+
+## P0-09 — Prevent duplicate invoice payment recording
+- Priority: P0
+- Status: IMPROVE
+- Area: Invoices / Payments
+- Problem:
+  Repeated submit clicks during the payment modal can record the same payment multiple times.
+- Why:
+  Duplicate payment posting is a financial integrity issue and must be treated as product-critical.
+- Scope:
+  - add frontend submit locking while payment is being saved
+  - add backend idempotency or duplicate-submit protection
+  - prevent double posting on retry/refresh edge cases
+  - show clear saving state in the payment modal
+- Constraints:
+  - preserve current payment posting flow
+  - do not rely only on UI disabling; backend must also protect writes
+- Acceptance Criteria:
+  - repeated clicks cannot create duplicate payment rows
+  - payment modal shows a proper loading/submitting state
+  - backend safely rejects duplicate submissions
+
+---
+
+## P0-10 — Hide payment actions when invoice is fully paid
+- Priority: P0
+- Status: IMPROVE
+- Area: Invoices / Payments UX
+- Problem:
+  After refresh, the record-payment button can still appear even when the invoice is already fully paid.
+- Why:
+  Unsupported payment actions create user confusion and increase the risk of incorrect payment attempts.
+- Scope:
+  - align invoice payment CTA visibility with live invoice balance state
+  - hide or disable record-payment action for fully paid invoices
+  - show clearer paid-state messaging where appropriate
+- Constraints:
+  - use live financial truth, not stale client assumptions
+- Acceptance Criteria:
+  - fully paid invoices do not show record-payment action
+  - payment action visibility always matches actual invoice balance state
+
+---
+
+## P0-11 — Add paid invoice cancel and refund workflow
+- Priority: P0
+- Status: TODO
+- Area: Invoices / Refunds
+- Problem:
+  There is no clear workflow for cancelling a paid invoice and recording the customer refund.
+- Why:
+  This is a real operational billing case and currently leaves a gap in the invoice lifecycle.
+- Scope:
+  - define cancel/refund workflow for paid invoices
+  - record refund against the invoice safely
+  - update invoice financial state and history
+  - prevent misuse on unsupported invoice states
+  - surface clear user messaging around refunded/cancelled state
+- Constraints:
+  - preserve accounting integrity
+  - do not silently mutate past paid state without auditability
+- Acceptance Criteria:
+  - paid invoices can be handled safely when a refund is required
+  - refund activity is visible and traceable
+  - invoice state reflects the refund/cancel action clearly
+
+---
+
+## P0-12 — Fix Expenses page runtime crash
+- Priority: P0
+- Status: TODO
+- Area: Expenses / Frontend Reliability
+- Problem:
+  The Expenses page is crashing because `formatCurrency` is not defined inside `ExpensesPage.jsx`.
+- Why:
+  This is a hard runtime failure that blocks access to the expense module.
+- Scope:
+  - identify missing import or removed helper reference
+  - restore `formatCurrency` usage safely
+  - verify menu/page loads without runtime errors
+  - add lightweight protection so similar missing-helper failures are easier to catch
+- Constraints:
+  - keep the current page behavior intact except for the fix
+- Acceptance Criteria:
+  - Expenses page opens without crashing
+  - currency values render correctly
+  - no `formatCurrency is not defined` error remains
+- Notes:
+  Reconfirmed on 2026-04-10. `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx` still calls `formatCurrency(...)` in the summary cards without defining or importing that helper, so this remains the highest-severity unresolved SPA defect.
 
 ---
 
@@ -330,7 +505,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - reports remain consistent with current org and accounting logic
   - empty and loading states are handled cleanly
 - Notes:
-  Completed on 2026-04-06. `ProfitTaxPage` now includes current receivables snapshot cards, receivables aging, invoice status mix for the selected period, top customer balances, and monthly invoice/expense trend views backed by `GET /vy/v1/reports/receivables-summary` and `GET /vy/v1/reports/monthly-trends`. The implementation stays on current `vy_*` invoices, payments, expenses, and journals, and deliberately does not invent a payables model where the current expense lifecycle does not yet support one.
+  Completed on 2026-04-08. `ProfitTaxPage` now includes current receivables and payables snapshot cards, receivables aging, payables aging, invoice status mix, vendor-bill status mix, top customer balances, top vendor balances, and monthly invoice/expense trend views backed by the live `vy_*` reports endpoints, including `GET /vy/v1/reports/payables-summary`.
 
 ---
 
@@ -416,6 +591,155 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - no unsupported or misleading controls are exposed
 - Notes:
   Completed on 2026-04-06. The wp-admin pending-user, registration-log, system-log, and OTP-attempt pages now reuse paginated filtered controller responses instead of raw latest-100 queries, and `UsersAdmin.jsx` now separates active members from pending invites.
+
+---
+
+## P1-07 — Improve invoice list table clarity
+- Priority: P1
+- Status: IMPROVE
+- Area: Invoices / List UX
+- Problem:
+  The invoice list table feels cluttered and is not presenting invoice data cleanly.
+- Why:
+  Invoice list is a high-frequency operational screen and should support fast scanning and action-taking.
+- Scope:
+  - improve table column hierarchy
+  - reduce clutter and excessive visual noise
+  - improve status visibility and spacing
+  - keep key actions accessible without crowding the row
+  - preserve mobile and smaller-screen usability where possible
+- Constraints:
+  - do not remove important operational information
+  - keep the page practical, not decorative
+- Acceptance Criteria:
+  - invoice list is easier to scan
+  - important columns and actions are clearer
+  - clutter is materially reduced
+
+---
+
+## P1-08 — Fix customer suggestion dropdown behavior in invoice form
+- Priority: P1
+- Status: IMPROVE
+- Area: Invoices / Form UX
+- Problem:
+  After selecting a customer from the suggestion dropdown, the dropdown still remains visible while the cursor stays in the input.
+- Why:
+  This creates unnecessary noise and makes the selection flow feel unfinished.
+- Scope:
+  - hide suggestion dropdown immediately after successful selection
+  - prevent stale suggestion list from remaining open
+  - preserve keyboard and mouse selection behavior
+- Constraints:
+  - do not break existing contact suggestion logic
+- Acceptance Criteria:
+  - selected customer closes the suggestion list properly
+  - dropdown only appears when it is actually needed
+
+---
+
+## P1-09 — Enforce customer phone input validation
+- Priority: P1
+- Status: IMPROVE
+- Area: Invoices / Form Validation
+- Problem:
+  Customer phone input is not restricted to numeric input and valid 10-digit length.
+- Why:
+  Weak validation reduces data quality and creates downstream contact issues.
+- Scope:
+  - restrict input to valid numeric characters
+  - enforce 10-digit validation rules where applicable
+  - provide clear validation feedback
+  - preserve edit usability and pasted input handling
+- Constraints:
+  - keep validation practical and user-friendly
+- Acceptance Criteria:
+  - invalid phone values are blocked or clearly flagged
+  - expected 10-digit phone values are handled correctly
+
+---
+
+## P1-10 — Simplify invoice template architecture to one direct HTML/PHP template
+- Priority: P1
+- Status: TODO
+- Area: Invoice Templates
+- Problem:
+  The current invoice template system is too indirect, spread across multiple functions, and harder than necessary to understand or extend manually.
+- Why:
+  Template rendering should be easy to inspect and easy to customize without tracing multiple layers.
+- Scope:
+  - remove multiple invoice template variants
+  - keep one default/simple invoice template
+  - refactor template flow so data is passed into a direct HTML/PHP template
+  - reduce function indirection in template rendering
+  - make manual template creation easier in the future
+- Constraints:
+  - preserve invoice PDF generation behavior
+  - avoid breaking existing invoice rendering data
+- Acceptance Criteria:
+  - one clear invoice template path exists
+  - template code can be understood from a mostly direct HTML/PHP file
+  - future manual template creation becomes straightforward
+
+---
+
+## P1-11 — Fix invoice template preview
+- Priority: P1
+- Status: REVIEW
+- Area: Invoice Templates
+- Problem:
+  Template preview is not working correctly.
+- Why:
+  Broken preview weakens confidence in invoice settings and template changes.
+- Scope:
+  - identify why preview rendering fails
+  - align preview data and real template rendering path
+  - ensure preview uses the active simple template correctly
+- Constraints:
+  - keep preview behavior consistent with actual invoice output
+- Acceptance Criteria:
+  - template preview loads correctly
+  - preview reflects the actual invoice rendering structure
+
+---
+
+## P1-12 — Remove developer-facing billing-path messaging from user UI
+- Priority: P1
+- Status: IMPROVE
+- Area: UX Copy / Product Messaging
+- Problem:
+  User-facing pages currently expose internal/developer-oriented system wording such as `vy_*` billing path details.
+- Why:
+  Product copy should help users, not expose implementation details.
+- Scope:
+  - remove internal platform/path wording from user UI
+  - replace developer-facing explanations with user-friendly copy
+  - review related invoice/settings notices for similar leakage
+- Constraints:
+  - do not remove genuinely useful user guidance
+- Acceptance Criteria:
+  - internal technical details are no longer shown to end users
+  - copy is product-facing and understandable
+
+---
+
+## P1-13 — Expand multi-organization management for company admins
+- Priority: P1
+- Status: IMPROVE
+- Area: Organizations
+- Problem:
+  Multi-organization support exists, but company admins do not yet have a proper way to create multiple organizations, and multi-org users need a clear org-switch flow.
+- Why:
+  The product already supports multi-org behavior at the platform level, so the admin experience should expose it properly.
+- Scope:
+  - let company admin create multiple organizations
+  - expose org-switching clearly for users with access to multiple orgs
+  - keep invite/access behavior aligned with org membership rules
+- Constraints:
+  - preserve existing org permissions and membership integrity
+- Acceptance Criteria:
+  - company admins can create additional organizations
+  - users with access to multiple orgs can switch between them clearly
 
 ---
 
@@ -628,7 +952,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P2-08 — Vendor bills / purchase-bill workflow
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Purchases / Payables
 - Problem:
   Expenses exist, but vendor-bill style workflows are not yet a first-class product path.
@@ -643,12 +967,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - align with current expense and journal model
 - Acceptance Criteria:
   - vendor bill workflows are supported without duplicating the expense system blindly
+- Notes:
+  Completed on 2026-04-07. `VyRestExpenses.php` now treats vendor bills as a first-class path on `vy_expenses`, including due-state and payment-state filters, a dedicated `/vy/v1/expenses/summary` endpoint, payable summary cards in `ExpensesPage.jsx`, and payment-account visibility in expense detail without creating a second payables model.
 
 ---
 
 ## P2-09 — Replace dashboard receivables approximation with the server-side summary
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Dashboard Reliability
 - Problem:
   The Home dashboard still derives open receivables from the latest 100 open invoices per status instead of the newer server-side receivables summary.
@@ -663,12 +989,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - reuse the current reports helper and endpoint path instead of duplicating balance logic in the client
 - Acceptance Criteria:
   - Home receivables numbers match the live server summary instead of a capped invoice subset
+- Notes:
+  Completed on 2026-04-07. `Home.jsx` already used the live receivables summary endpoint, and this run removed the last stale approximation wording so the receivables and overdue cards now explicitly describe the server-side snapshot and overdue aging output.
 
 ---
 
 ## P2-10 — Add rollback discipline to org member and invite writes
 - Priority: P2
-- Status: TODO
+- Status: DONE
 - Area: Org Management Reliability
 - Problem:
   Org member/invite flows still perform multi-step writes without the rollback discipline now present in the financial controllers.
@@ -683,6 +1011,79 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - preserve the current invite and member UX contracts
 - Acceptance Criteria:
   - the highest-risk org member/invite write flows fail safely without leaving partial membership state behind
+- Notes:
+  Completed on 2026-04-07. `OrgUsersController.php` now cleans up freshly created users when invite acceptance fails, claims invites inside a transaction, and repairs user active-org meta after member removal. The current PHP harness now covers those rollback paths directly.
+
+---
+
+## P2-11 — Add later settlement flow for unpaid expenses and bills
+- Priority: P2
+- Status: DONE
+- Area: Payables Lifecycle
+- Problem:
+  Unpaid expenses and vendor bills can be recorded, but they still cannot be safely settled later.
+- Why:
+  This is the remaining operational gap in the current payables lifecycle after vendor-bill visibility is live.
+- Scope:
+  - settlement endpoint on existing `vy_expenses`
+  - payment-account selection for an existing unpaid record
+  - journal-safe posting and duplicate-payment protection
+  - expense/bill detail and list updates that expose only the supported settlement action
+- Constraints:
+  - stay inside the current expense and journal model
+  - preserve current edit/archive restrictions once a payment journal exists
+  - do not create a second payment subsystem
+- Acceptance Criteria:
+  - existing unpaid expenses or bills can be settled safely after creation
+  - journal integrity remains intact
+  - the UI does not expose unsupported settlement states
+- Notes:
+  Completed on 2026-04-08. `VyRestExpenses.php` now exposes a later settlement path for unpaid expenses and vendor bills, writes the payment journal through the existing journal engine, locks records after settlement through the existing edit-state rules, and exposes the flow in `ExpenseDetailPage.jsx` without creating a second payment subsystem.
+
+---
+
+## P2-12 — Expand payables reporting on live vendor-bill data
+- Priority: P2
+- Status: DONE
+- Area: Payables Reporting
+- Problem:
+  Vendor-bill visibility is now present in the expenses module, but reporting still focuses mainly on receivables and tax.
+- Why:
+  Once later settlement exists, payables aging and open-bill reporting become a natural next operational surface.
+- Scope:
+  - open bill totals
+  - overdue bill totals
+  - payable aging buckets
+  - vendor concentration or top payable vendors where practical
+- Constraints:
+  - use live `vy_expenses`, contacts, and journals only
+  - do not invent procurement or inventory accounting
+- Acceptance Criteria:
+  - the reports module exposes meaningful payables visibility grounded in the live bill model
+- Notes:
+  Completed on 2026-04-08. `VyRestReports.php` and `ReportHelper.php` now expose live payables reporting on `vy_expenses`, including open payable totals, overdue and due-today vendor-bill visibility, aging buckets, top vendor balances, and vendor-bill status mix surfaced in `ProfitTaxPage.jsx`.
+
+---
+
+## P2-13 — Bring Home and CompanySettings onto shared async/state patterns
+- Priority: P2
+- Status: DONE
+- Area: Frontend Reliability
+- Problem:
+  Most active module screens now share async/query/state primitives, but `Home.jsx` and `CompanySettings.jsx` still keep more bespoke fetch and state handling.
+- Why:
+  These remain high-traffic screens and are easier to keep stable once they follow the same operational UI patterns as the normalized modules.
+- Scope:
+  - move repeated async/error handling onto shared primitives where it fits
+  - keep current page contracts and routes intact
+  - preserve current operational layout and org-aware behavior
+- Constraints:
+  - no router rewrite
+  - no dashboard redesign
+- Acceptance Criteria:
+  - Home and CompanySettings become easier to maintain without changing their product scope
+- Notes:
+  Completed on 2026-04-08. `Home.jsx` and `CompanySettings.jsx` now use the shared `useAsyncResource` loading/error pattern, and `useAsyncResource.js` now refreshes with consistent loading/error behavior instead of leaving those high-traffic screens on bespoke fetch orchestration.
 
 ---
 
@@ -690,7 +1091,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P3-01 — OCR bill extraction
 - Priority: P3
-- Status: TODO
+- Status: BLOCKED
 - Area: Smart Expense Workflows
 - Problem:
   OCR-based bill ingestion is part of product vision but not current active code.
@@ -706,12 +1107,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - do not start before core expense workflows are mature
 - Acceptance Criteria:
   - OCR ingestion produces a safe user-reviewed draft flow
+- Notes:
+  Blocked on 2026-04-10 after re-inspection. The current repository still has image-only managed uploads in `plugins/khatabook/backend/Media/ManagedImageUpload.php`, no expense-file attachment model in `plugins/khatabook/backend/Api/VyRestExpenses.php`, no local OCR library in `plugins/khatabook/composer.json` or `plugins/khatabook/app/package.json`, and no existing parser service to build on. Do not fake this feature or add a remote OCR dependency without explicit approval.
 
 ---
 
 ## P3-02 — Billing health score
 - Priority: P3
-- Status: TODO
+- Status: DONE
 - Area: Intelligence / Dashboard
 - Problem:
   Product vision calls for a business health layer, but the current dashboard is still an operational baseline rather than an intelligence layer.
@@ -726,12 +1129,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - base this only on real tracked data
 - Acceptance Criteria:
   - health score is transparent and explainable, not decorative
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Helpers/ReportHelper.php` and `plugins/khatabook/backend/Api/VyRestReports.php` now expose a live billing-health score based on receivables, payables, promise reliability, margin health, and current attention load, and both `plugins/khatabook/app/src/pages/Home.jsx` and `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx` surface the component-level reasons behind the score.
 
 ---
 
 ## P3-03 — Owner daily brief
 - Priority: P3
-- Status: TODO
+- Status: DONE
 - Area: Intelligence / Notifications
 - Problem:
   Owner-focused daily summaries are part of product vision but require stronger dashboards and data surfaces first.
@@ -747,12 +1152,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - only use confirmed current/live metrics
 - Acceptance Criteria:
   - summary is accurate, useful, and operational
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Helpers/ReportHelper.php` and `plugins/khatabook/backend/Api/VyRestReports.php` now expose an org-safe owner daily brief using live invoice, payment, expense, payable, and promise data, and the brief is now visible in `plugins/khatabook/app/src/pages/Home.jsx` and `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx`.
 
 ---
 
 ## P3-04 — Invoice risk engine
 - Priority: P3
-- Status: TODO
+- Status: DONE
 - Area: Billing Intelligence
 - Problem:
   Product vision wants proactive invoice checks before send/finalization.
@@ -767,12 +1174,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - use explainable rule-based logic first
 - Acceptance Criteria:
   - users see useful pre-send risk flags grounded in real data
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Helpers/InvoiceRiskHelper.php` now evaluates invoice totals, due dates, customer completeness, historical amount anomalies, and item/tax mismatches, `plugins/khatabook/backend/Api/VyRestInvoices.php` returns that risk summary in invoice detail, and `plugins/khatabook/app/src/modules/invoices/InvoiceDetail.jsx` surfaces the warnings before email/PDF actions.
 
 ---
 
 ## P3-05 — Revenue leak detector
 - Priority: P3
-- Status: TODO
+- Status: DONE
 - Area: Business Intelligence
 - Problem:
   Product vision includes leak detection, but the base operational layer must exist first.
@@ -787,12 +1196,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - do not introduce fake precision
 - Acceptance Criteria:
   - users get grounded, explainable leak warnings
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Helpers/ReportHelper.php` and `plugins/khatabook/backend/Api/VyRestReports.php` now expose grounded leak signals for missed recurring runs, broken promises, overdue invoices without active commitments, sent invoices without email trace, and stale drafts, with the UI surfaced in `plugins/khatabook/app/src/pages/Home.jsx`, `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx`, and `plugins/khatabook/app/src/modules/reports/RevenueLeakPanel.jsx`.
 
 ---
 
 ## P3-06 — AI invoice assistant
 - Priority: P3
-- Status: TODO
+- Status: BLOCKED
 - Area: AI / Billing
 - Problem:
   AI-assisted invoice drafting is aspirational right now, not an immediate current-repo need.
@@ -806,6 +1217,8 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - only after core operational quality is strong
 - Acceptance Criteria:
   - assistant improves speed without weakening data correctness
+- Notes:
+  Blocked on 2026-04-10 after repo re-inspection. No active AI provider/client/config path exists in `plugins/khatabook/backend`, `plugins/khatabook/app`, `plugins/khatabook/composer.json`, or `plugins/khatabook/app/package.json`. Do not add a speculative AI dependency or cloud workflow without explicit approval.
 
 ---
 
@@ -877,24 +1290,12 @@ These can be promoted later after:
 
 # Recommended Execution Order
 
-1. P0-05 — company settings cleanup
-2. P1-01 — audit trail
-3. P1-02 — payment activity surface
-4. P1-03 — reports expansion
-5. P1-04 — logging consolidation
-6. P1-05 — transactional safety
-7. P1-06 — admin tooling improvement
-8. P2-01 — shared async/query cleanup
-9. P2-02 — UI pattern normalization
-10. P2-02A — bundle size and route-level loading
-11. P2-03 — company media handling only for real consumers
-12. P2-04 — customer statements
-13. P2-05 — recurring billing
-14. P2-06 — credit notes and debit notes
-15. P2-07 — promise-to-pay tracking
-16. P2-08 — vendor bills / purchase-bill workflow
-17. P2-09 — dashboard receivables server-summary alignment
-18. P2-10 — org member/invite rollback discipline
-19. P2 expansion items
-20. P3 advanced intelligence items
-21. blocked items only after explicit decisions
+P0-P3 execution work is complete through the revenue leak detector and email-system cleanup as of 2026-04-10. The remaining default-safe queue is now:
+
+1. P0-12 — fix the confirmed `ExpensesPage.jsx` runtime crash
+2. P0-08 — restore safe account lifecycle actions
+3. P0-09 — prevent duplicate invoice payment recording
+4. P0-10 — hide payment actions when invoices are fully paid
+5. P0-11 — add a paid-invoice cancel and refund workflow
+6. P3-06 — AI invoice assistant only after explicit AI/provider approval
+7. P3-01 and other blocked items only after explicit dependency or product decisions

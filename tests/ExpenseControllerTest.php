@@ -360,6 +360,480 @@ kbs_test('vendor bill update keeps bill due tracking and workflow state visible 
     kbs_assert_same(false, $data['is_overdue'] ?? true);
 });
 
+kbs_test('expense summary reports open and overdue vendor bills from the live expense model', function (): void {
+    kbs_test_add_user([
+        'ID' => 409,
+        'user_email' => 'bill-summary@example.com',
+        'display_name' => 'Bill Summary User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(409);
+    kbs_test_set_user_meta(409, 'vy_active_org_id', 49);
+    kbs_test_seed_org_membership(409, 49, 'company_admin', true, 'Bill Summary Org');
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_expenses', [
+        [
+            'id' => 9,
+            'org_id' => 49,
+            'contact_id' => null,
+            'expense_account_id' => 70,
+            'document_type' => 'BILL',
+            'expense_date' => '2026-04-02',
+            'due_date' => '2026-04-04',
+            'category' => 'Inventory',
+            'reference_number' => 'BILL-OPEN',
+            'payee' => 'Vendor Open',
+            'description' => 'Open bill',
+            'amount' => 3200.0,
+            'currency' => 'INR',
+            'gst_rate' => 0.0,
+            'gst_amount' => 0.0,
+            'gst_type' => 'GST',
+            'is_gst_input_eligible' => 1,
+            'status' => 'POSTED',
+            'payment_journal_id' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 10,
+            'org_id' => 49,
+            'contact_id' => null,
+            'expense_account_id' => 70,
+            'document_type' => 'BILL',
+            'expense_date' => '2026-04-02',
+            'due_date' => '2026-04-25',
+            'category' => 'Services',
+            'reference_number' => 'BILL-PAID',
+            'payee' => 'Vendor Paid',
+            'description' => 'Paid bill',
+            'amount' => 1800.0,
+            'currency' => 'INR',
+            'gst_rate' => 0.0,
+            'gst_amount' => 0.0,
+            'gst_type' => 'GST',
+            'is_gst_input_eligible' => 1,
+            'status' => 'POSTED',
+            'payment_journal_id' => 501,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 11,
+            'org_id' => 49,
+            'contact_id' => null,
+            'expense_account_id' => 70,
+            'document_type' => 'EXPENSE',
+            'expense_date' => '2026-04-03',
+            'due_date' => null,
+            'category' => 'Travel',
+            'reference_number' => '',
+            'payee' => 'Taxi Vendor',
+            'description' => 'Direct expense',
+            'amount' => 900.0,
+            'currency' => 'INR',
+            'gst_rate' => 0.0,
+            'gst_amount' => 0.0,
+            'gst_type' => 'GST',
+            'is_gst_input_eligible' => 1,
+            'status' => 'POSTED',
+            'payment_journal_id' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+    ]);
+
+    $result = VyRestExpenses::get_expense_summary(kbs_test_make_request('GET', '/vy/v1/expenses/summary', [
+        'status' => 'ACTIVE',
+    ]));
+    $response = kbs_assert_response($result, 200);
+    $data = $response->get_data();
+
+    kbs_assert_same(3, $data['total_records'] ?? null);
+    kbs_assert_same(5900.0, (float) ($data['total_amount'] ?? 0));
+    kbs_assert_same(2, $data['bill_count'] ?? null);
+    kbs_assert_same(1, $data['open_bill_count'] ?? null);
+    kbs_assert_same(1, $data['overdue_bill_count'] ?? null);
+    kbs_assert_same(1, $data['paid_count'] ?? null);
+});
+
+kbs_test('expense list filters vendor bills by payment and due state', function (): void {
+    kbs_test_add_user([
+        'ID' => 410,
+        'user_email' => 'bill-filter@example.com',
+        'display_name' => 'Bill Filter User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(410);
+    kbs_test_set_user_meta(410, 'vy_active_org_id', 50);
+    kbs_test_seed_org_membership(410, 50, 'company_admin', true, 'Bill Filter Org');
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_expenses', [
+        [
+            'id' => 12,
+            'org_id' => 50,
+            'contact_id' => null,
+            'expense_account_id' => 80,
+            'document_type' => 'BILL',
+            'expense_date' => '2026-04-02',
+            'due_date' => '2026-04-03',
+            'category' => 'Materials',
+            'reference_number' => 'BILL-OD',
+            'payee' => 'Vendor One',
+            'description' => 'Overdue bill',
+            'amount' => 4100.0,
+            'currency' => 'INR',
+            'gst_rate' => 0.0,
+            'gst_amount' => 0.0,
+            'gst_type' => 'GST',
+            'is_gst_input_eligible' => 1,
+            'status' => 'POSTED',
+            'payment_journal_id' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 13,
+            'org_id' => 50,
+            'contact_id' => null,
+            'expense_account_id' => 80,
+            'document_type' => 'BILL',
+            'expense_date' => '2026-04-02',
+            'due_date' => '2026-04-25',
+            'category' => 'Services',
+            'reference_number' => 'BILL-UP',
+            'payee' => 'Vendor Two',
+            'description' => 'Upcoming bill',
+            'amount' => 1900.0,
+            'currency' => 'INR',
+            'gst_rate' => 0.0,
+            'gst_amount' => 0.0,
+            'gst_type' => 'GST',
+            'is_gst_input_eligible' => 1,
+            'status' => 'POSTED',
+            'payment_journal_id' => null,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 14,
+            'org_id' => 50,
+            'contact_id' => null,
+            'expense_account_id' => 80,
+            'document_type' => 'BILL',
+            'expense_date' => '2026-04-02',
+            'due_date' => '2026-04-10',
+            'category' => 'Services',
+            'reference_number' => 'BILL-PAID',
+            'payee' => 'Vendor Three',
+            'description' => 'Paid bill',
+            'amount' => 900.0,
+            'currency' => 'INR',
+            'gst_rate' => 0.0,
+            'gst_amount' => 0.0,
+            'gst_type' => 'GST',
+            'is_gst_input_eligible' => 1,
+            'status' => 'POSTED',
+            'payment_journal_id' => 700,
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+    ]);
+
+    $result = VyRestExpenses::list_expenses(kbs_test_make_request('GET', '/vy/v1/expenses', [
+        'document_type' => 'BILL',
+        'payment_state' => 'UNPAID',
+        'due_state' => 'OVERDUE',
+        'page' => 1,
+        'per_page' => 10,
+    ]));
+    $response = kbs_assert_response($result, 200);
+    $data = $response->get_data();
+
+    kbs_assert_count(1, $data['data'] ?? []);
+    kbs_assert_same('BILL-OD', $data['data'][0]['reference_number'] ?? null);
+    kbs_assert_same('OVERDUE', $data['data'][0]['due_state'] ?? null);
+    kbs_assert_same(1, $data['pagination']['total'] ?? null);
+});
+
+kbs_test('expense detail exposes the paying account summary for journalized vendor bills', function (): void {
+    kbs_test_add_user([
+        'ID' => 411,
+        'user_email' => 'bill-detail@example.com',
+        'display_name' => 'Bill Detail User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(411);
+    kbs_test_set_user_meta(411, 'vy_active_org_id', 51);
+    kbs_test_seed_org_membership(411, 51, 'company_admin', true, 'Bill Detail Org');
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [[
+        'id' => 81,
+        'org_id' => 51,
+        'code' => 'GENERAL_EXPENSES',
+        'name' => 'General Expenses',
+        'type' => 'EXPENSE',
+        'sub_type' => 'SYSTEM',
+        'currency' => 'INR',
+        'is_system' => 1,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ], [
+        'id' => 82,
+        'org_id' => 51,
+        'code' => 'BANK-1',
+        'name' => 'Main Bank',
+        'type' => 'ASSET',
+        'sub_type' => 'BANK',
+        'currency' => 'INR',
+        'is_system' => 0,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_expenses', [[
+        'id' => 15,
+        'org_id' => 51,
+        'contact_id' => null,
+        'expense_account_id' => 81,
+        'document_type' => 'BILL',
+        'expense_date' => '2026-04-02',
+        'due_date' => '2026-04-10',
+        'category' => 'Consulting',
+        'reference_number' => 'BILL-SETTLED',
+        'payee' => 'Vendor Four',
+        'description' => 'Settled bill',
+        'amount' => 2600.0,
+        'currency' => 'INR',
+        'gst_rate' => 0.0,
+        'gst_amount' => 0.0,
+        'gst_type' => 'GST',
+        'is_gst_input_eligible' => 1,
+        'status' => 'POSTED',
+        'payment_journal_id' => 810,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines', [
+        [
+            'id' => 1,
+            'journal_id' => 810,
+            'org_id' => 51,
+            'account_id' => 81,
+            'debit' => 2600.0,
+            'credit' => 0.0,
+            'line_memo' => 'Expense',
+            'created_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 2,
+            'journal_id' => 810,
+            'org_id' => 51,
+            'account_id' => 82,
+            'debit' => 0.0,
+            'credit' => 2600.0,
+            'line_memo' => 'Expense payment',
+            'created_at' => current_time('mysql'),
+        ],
+    ]);
+
+    $result = VyRestExpenses::get_expense(kbs_test_make_request('GET', '/vy/v1/expenses/15', ['id' => 15]));
+    $response = kbs_assert_response($result, 200);
+    $data = $response->get_data();
+
+    kbs_assert_same('Main Bank', $data['payment_account']['name'] ?? null);
+    kbs_assert_same(82, $data['pay_from_account_id'] ?? null);
+    kbs_assert_same('Main Bank', $data['pay_from_account_name'] ?? null);
+    kbs_assert_same('General Expenses', $data['expense_account']['name'] ?? null);
+});
+
+kbs_test('expense settlement records a payment journal for unpaid expenses and vendor bills', function (): void {
+    kbs_test_add_user([
+        'ID' => 412,
+        'user_email' => 'bill-settle@example.com',
+        'display_name' => 'Bill Settlement User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(412);
+    kbs_test_set_user_meta(412, 'vy_active_org_id', 52);
+    kbs_test_seed_org_membership(412, 52, 'company_admin', true, 'Bill Settlement Org');
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [[
+        'id' => 91,
+        'org_id' => 52,
+        'code' => 'GENERAL_EXPENSES',
+        'name' => 'General Expenses',
+        'type' => 'EXPENSE',
+        'sub_type' => 'SYSTEM',
+        'currency' => 'INR',
+        'is_system' => 1,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ], [
+        'id' => 92,
+        'org_id' => 52,
+        'code' => 'BANK-MAIN',
+        'name' => 'Main Bank',
+        'type' => 'ASSET',
+        'sub_type' => 'BANK',
+        'currency' => 'INR',
+        'is_system' => 0,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_expenses', [[
+        'id' => 16,
+        'org_id' => 52,
+        'contact_id' => null,
+        'expense_account_id' => 91,
+        'document_type' => 'BILL',
+        'expense_date' => '2026-04-06',
+        'due_date' => '2026-04-15',
+        'category' => 'Packaging',
+        'reference_number' => 'BILL-SETTLE',
+        'payee' => 'Vendor Five',
+        'description' => 'Boxes and tape',
+        'amount' => 3100.0,
+        'currency' => 'INR',
+        'gst_rate' => 0.0,
+        'gst_amount' => 0.0,
+        'gst_type' => 'GST',
+        'is_gst_input_eligible' => 1,
+        'status' => 'POSTED',
+        'payment_journal_id' => null,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+
+    $response = VyRestExpenses::settle_expense(kbs_test_make_request('POST', '/vy/v1/expenses/16/settle', ['id' => 16], [
+        'date' => '2026-04-09',
+        'pay_from_account_id' => 92,
+    ]));
+    $data = kbs_assert_response($response, 200)->get_data();
+
+    kbs_assert_same(16, $data['id'] ?? null);
+    kbs_assert_true((int) ($data['payment_journal_id'] ?? 0) > 0, 'Settlement should link a payment journal.');
+    kbs_assert_same('PAID', $data['payment_state'] ?? null);
+    kbs_assert_same(false, $data['can_settle'] ?? true);
+    kbs_assert_same('Main Bank', $data['payment_account']['name'] ?? null);
+
+    $expenses = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_expenses');
+    $history = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_record_history');
+    $journalEntries = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_entries');
+    $journalLines = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines');
+
+    kbs_assert_true((int) ($expenses[0]['payment_journal_id'] ?? 0) > 0, 'The expense row should retain the payment journal link.');
+    kbs_assert_count(1, $journalEntries, 'Settlement should create one journal entry.');
+    kbs_assert_count(2, $journalLines, 'Settlement should create a balanced two-line journal entry.');
+    kbs_assert_count(1, $history, 'Settlement should add one audit history row.');
+    kbs_assert_same('settled', $history[0]['action'] ?? null);
+});
+
+kbs_test('expense settlement rejects invalid payment accounts and rolls back failed journal posts', function (): void {
+    kbs_test_add_user([
+        'ID' => 413,
+        'user_email' => 'bill-settle-rollback@example.com',
+        'display_name' => 'Bill Settlement Rollback User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(413);
+    kbs_test_set_user_meta(413, 'vy_active_org_id', 53);
+    kbs_test_seed_org_membership(413, 53, 'company_admin', true, 'Bill Settlement Rollback Org');
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [[
+        'id' => 93,
+        'org_id' => 53,
+        'code' => 'GENERAL_EXPENSES',
+        'name' => 'General Expenses',
+        'type' => 'EXPENSE',
+        'sub_type' => 'SYSTEM',
+        'currency' => 'INR',
+        'is_system' => 1,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ], [
+        'id' => 94,
+        'org_id' => 53,
+        'code' => 'AP-VENDOR',
+        'name' => 'Vendor Clearing',
+        'type' => 'LIABILITY',
+        'sub_type' => 'PAYABLE',
+        'currency' => 'INR',
+        'is_system' => 0,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'CREDIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ], [
+        'id' => 95,
+        'org_id' => 53,
+        'code' => 'CASH-1',
+        'name' => 'Petty Cash',
+        'type' => 'ASSET',
+        'sub_type' => 'CASH',
+        'currency' => 'INR',
+        'is_system' => 0,
+        'status' => 'ACTIVE',
+        'opening_balance' => 0,
+        'opening_balance_type' => 'DEBIT',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_expenses', [[
+        'id' => 17,
+        'org_id' => 53,
+        'contact_id' => null,
+        'expense_account_id' => 93,
+        'document_type' => 'BILL',
+        'expense_date' => '2026-04-06',
+        'due_date' => '2026-04-18',
+        'category' => 'Logistics',
+        'reference_number' => 'BILL-ROLLBACK',
+        'payee' => 'Vendor Six',
+        'description' => 'Delivery bill',
+        'amount' => 1800.0,
+        'currency' => 'INR',
+        'gst_rate' => 0.0,
+        'gst_amount' => 0.0,
+        'gst_type' => 'GST',
+        'is_gst_input_eligible' => 1,
+        'status' => 'POSTED',
+        'payment_journal_id' => null,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+
+    $invalidAccount = VyRestExpenses::settle_expense(kbs_test_make_request('POST', '/vy/v1/expenses/17/settle', ['id' => 17], [
+        'date' => '2026-04-09',
+        'pay_from_account_id' => 94,
+    ]));
+    kbs_assert_wp_error($invalidAccount, 'vy_bad_payment_account', 400);
+
+    kbs_test_fail_next_insert($GLOBALS['wpdb']->prefix . 'vy_journal_lines');
+
+    $rollback = VyRestExpenses::settle_expense(kbs_test_make_request('POST', '/vy/v1/expenses/17/settle', ['id' => 17], [
+        'date' => '2026-04-09',
+        'pay_from_account_id' => 95,
+    ]));
+    kbs_assert_wp_error($rollback, 'vy_journal_line_insert_failed', 500);
+
+    $expenses = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_expenses');
+    kbs_assert_same(null, $expenses[0]['payment_journal_id'] ?? null);
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_entries'), 'Settlement rollback should remove failed journal entries.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines'), 'Settlement rollback should remove failed journal lines.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_record_history'), 'Settlement rollback should not leave an audit history row.');
+});
+
 kbs_test('expense archive marks unpaid expenses as archived and blocks journalized expenses', function (): void {
     kbs_test_add_user([
         'ID' => 405,

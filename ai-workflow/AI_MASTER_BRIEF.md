@@ -19,16 +19,21 @@ The current product already supports:
 - first-class customer and vendor contact management
 - customer statements from live invoice and payment activity
 - operational dashboard summaries on the SPA home screen
+- billing health scoring with explainable component reasons
+- owner daily brief summaries grounded in live operational data
+- revenue leak detection grounded in recurring, promise, overdue, email-trace, and stale-draft signals
 - company settings limited to confirmed live settings categories plus company-logo upload for the confirmed fallback-render consumer
 - invoice creation, editing, payment posting, preview, PDF, and email
+- rule-based invoice risk checks before send/PDF actions
 - recurring billing profiles on live `vy_*` invoices with manual and scheduled generation
 - invoice-linked credit notes and debit notes that adjust receivables server-side
 - promise-to-pay tracking tied to invoice collections workflows
 - payment activity visibility beyond invoice detail
 - record-level financial history for invoices, expenses, and invoice payments
 - invoice template settings and logo upload
-- expense creation, editing, archive, and detail tracking
-- profit, GST, tax, receivables aging, invoice status, top-balance, and monthly trend reporting
+- expense creation, editing, archive, later settlement, and detail tracking
+- profit, GST, tax, receivables aging, payables aging, billing health, owner-daily-brief, status mix, top-balance, and monthly trend reporting
+- branded document and OTP email delivery through the canonical Vyavhar email shell
 - internal business email notifications
 
 ---
@@ -141,7 +146,7 @@ The product should feel:
 
 ### Testing
 - lightweight custom PHP harness in `plugins/khatabook/tests`
-- helper-level and controller-rule coverage now exists for auth, org access, invoice create/update/payment list, recurring billing generation, invoice credit/debit notes, promise-to-pay state changes, expense create/update/archive, report endpoints, transaction rollback behavior, system logging, and invoice template behavior
+- helper-level and controller-rule coverage now exists for auth, org access, invoice create/update/payment list, recurring billing generation, invoice credit/debit notes, promise-to-pay state changes, expense create/update/archive/settlement, report endpoints including payables summaries, transaction rollback behavior, system logging, and invoice template behavior
 - no browser test suite currently active
 - no shared typed contract layer currently active
 
@@ -208,12 +213,14 @@ Purpose:
 - payment posting
 - payment activity visibility
 - email and PDF generation
+- rule-based pre-send risk checks
 - numbering and document rendering
 
 Primary files:
 - `backend/Api/VyRestInvoices.php`
 - `backend/Helpers/InvoiceEditHelper.php`
 - `backend/Helpers/InvoiceFinancialHelper.php`
+- `backend/Helpers/InvoiceRiskHelper.php`
 - `backend/Helpers/InvoiceEmailHelper.php`
 - `backend/Invoices/VyInvoicePdf.php`
 - `app/src/modules/invoices/*`
@@ -221,16 +228,19 @@ Primary files:
 
 ### Expenses
 Purpose:
-- expense create/list/detail/update/archive
-- optional journal-backed payment posting
+- expense create/list/detail/update/archive/settlement
+- vendor-bill due tracking and payable visibility on the same `vy_expenses` model
+- journal-backed payment posting at create time or later settlement
 
 Primary files:
 - `backend/Api/VyRestExpenses.php`
+- `backend/Helpers/ExpenseEditHelper.php`
 - `app/src/modules/expenses/*`
 
 Current product note:
 - edit and archive are intentionally blocked once a payment journal exists
-- detail views now include record-level activity history
+- detail views now include record-level activity history plus expense/payment account summaries
+- unpaid expenses and bills can now be settled later from the detail flow without leaving the live `vy_expenses` model
 
 ### Reports
 Purpose:
@@ -238,15 +248,35 @@ Purpose:
 - GST summary
 - tax estimate
 - receivables snapshot
+- payables snapshot
 - receivables aging
+- payables aging
+- billing health score
+- owner daily brief
+- revenue leak detector
 - invoice status mix
+- vendor-bill status mix
 - top customer balances
+- top vendor balances
 - monthly invoice and expense trend
 
 Primary files:
 - `backend/Api/VyRestReports.php`
 - `backend/Helpers/ReportHelper.php`
 - `app/src/modules/reports/ProfitTaxPage.jsx`
+
+### Email and notifications
+Purpose:
+- canonical Vyavhar-branded transactional email rendering
+- customer-facing invoice emails with PDF attachments and document summaries
+- dedicated OTP email template for login and registration flows
+- internal org notifications for document creation and access workflows
+
+Primary files:
+- `backend/Email/EmailManager.php`
+- `backend/Helpers/InvoiceEmailHelper.php`
+- `backend/Auth/OtpAuth.php`
+- `backend/Notifications/InternalDocumentNotifier.php`
 
 ### Invoice templates and document settings
 Purpose:

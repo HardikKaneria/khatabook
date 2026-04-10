@@ -272,6 +272,7 @@ final class KbsTestWpdb
     public function get_var(string $query)
     {
         $query = trim($query);
+        $normalized = preg_replace('/\s+/', ' ', $query) ?? $query;
 
         if (stripos($query, 'information_schema.tables') !== false) {
             return 1;
@@ -285,6 +286,15 @@ final class KbsTestWpdb
             $table = $matches[1];
             $userId = (int) $matches[2];
             $orgId = (int) $matches[3];
+            return count(array_filter($this->table($table), static function (array $row) use ($userId, $orgId): bool {
+                return (int) ($row['user_id'] ?? 0) === $userId && (int) ($row['org_id'] ?? 0) === $orgId;
+            }));
+        }
+
+        if (preg_match("/SELECT\\s+COUNT\\(1\\)\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+AND\\s+user_id\\s*=\\s*(\\d+)/i", $query, $matches)) {
+            $table = $matches[1];
+            $orgId = (int) $matches[2];
+            $userId = (int) $matches[3];
             return count(array_filter($this->table($table), static function (array $row) use ($userId, $orgId): bool {
                 return (int) ($row['user_id'] ?? 0) === $userId && (int) ($row['org_id'] ?? 0) === $orgId;
             }));
@@ -357,29 +367,43 @@ final class KbsTestWpdb
             return null;
         }
 
-        if (preg_match("/SELECT\\s+COUNT\\(1\\)\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)(?:\\s+AND\\s+date\\s*>=\\s*'([^']+)')?(?:\\s+AND\\s+date\\s*<=\\s*'([^']+)')?(?:\\s+AND\\s+invoice_id\\s*=\\s*(\\d+))?/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+        if (preg_match("/SELECT\\s+role\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+AND\\s+user_id\\s*=\\s*(\\d+)/i", $query, $matches)) {
             $table = $matches[1];
             $orgId = (int) $matches[2];
-            $from = $matches[3] ?? '';
-            $to = $matches[4] ?? '';
-            $invoiceId = isset($matches[5]) ? (int) $matches[5] : 0;
+            $userId = (int) $matches[3];
+            foreach ($this->table($table) as $row) {
+                if ((int) ($row['org_id'] ?? 0) === $orgId && (int) ($row['user_id'] ?? 0) === $userId) {
+                    return $row['role'] ?? null;
+                }
+            }
+            return null;
+        }
 
-            return count(array_filter($this->table($table), static function (array $row) use ($orgId, $from, $to, $invoiceId): bool {
-                if ((int) ($row['org_id'] ?? 0) !== $orgId) {
-                    return false;
-                }
-                $date = (string) ($row['date'] ?? '');
-                if ($from !== '' && $date < $from) {
-                    return false;
-                }
-                if ($to !== '' && $date > $to) {
-                    return false;
-                }
-                if ($invoiceId > 0 && (int) ($row['invoice_id'] ?? 0) !== $invoiceId) {
-                    return false;
-                }
-                return true;
-            }));
+        if (preg_match("/SELECT\\s+COUNT\\(1\\)\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)(?:\\s+AND\\s+date\\s*>=\\s*'([^']+)')?(?:\\s+AND\\s+date\\s*<=\\s*'([^']+)')?(?:\\s+AND\\s+invoice_id\\s*=\\s*(\\d+))?/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+            $table = $matches[1];
+            if (!str_ends_with($table, 'vy_expenses')) {
+                $orgId = (int) $matches[2];
+                $from = $matches[3] ?? '';
+                $to = $matches[4] ?? '';
+                $invoiceId = isset($matches[5]) ? (int) $matches[5] : 0;
+
+                return count(array_filter($this->table($table), static function (array $row) use ($orgId, $from, $to, $invoiceId): bool {
+                    if ((int) ($row['org_id'] ?? 0) !== $orgId) {
+                        return false;
+                    }
+                    $date = (string) ($row['date'] ?? '');
+                    if ($from !== '' && $date < $from) {
+                        return false;
+                    }
+                    if ($to !== '' && $date > $to) {
+                        return false;
+                    }
+                    if ($invoiceId > 0 && (int) ($row['invoice_id'] ?? 0) !== $invoiceId) {
+                        return false;
+                    }
+                    return true;
+                }));
+            }
         }
 
         if (preg_match("/SELECT\\s+org_name\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)/i", $query, $matches)) {
@@ -391,6 +415,10 @@ final class KbsTestWpdb
                 }
             }
             return null;
+        }
+
+        if (preg_match("/SELECT\\s+COUNT\\(1\\)\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+(.+)/i", $normalized, $matches) && str_ends_with($matches[1], 'vy_expenses')) {
+            return count($this->filter_expense_rows_from_conditions($matches[1], $matches[2]));
         }
 
         return null;
@@ -455,6 +483,21 @@ final class KbsTestWpdb
             return $this->format_row($rows[0] ?? null, $output);
         }
 
+        if (preg_match("/SELECT\\s+account_id\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+AND\\s+journal_id\\s*=\\s*(\\d+)\\s+AND\\s+credit\\s*>\\s*0/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+            $table = $matches[1];
+            $orgId = (int) $matches[2];
+            $journalId = (int) $matches[3];
+            $rows = array_values(array_filter($this->table($table), static function (array $row) use ($orgId, $journalId): bool {
+                return (int) ($row['org_id'] ?? 0) === $orgId
+                    && (int) ($row['journal_id'] ?? 0) === $journalId
+                    && (float) ($row['credit'] ?? 0) > 0;
+            }));
+            usort($rows, static function (array $left, array $right): int {
+                return ((int) ($left['id'] ?? 0)) <=> ((int) ($right['id'] ?? 0));
+            });
+            return $this->format_row($rows[0] ?? null, $output);
+        }
+
         if (preg_match("/SELECT\\s+(.+)\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+AND\\s+category\\s*=\\s*'([^']+)'/i", $query, $matches)) {
             $table = $matches[2];
             $orgId = (int) $matches[3];
@@ -492,12 +535,32 @@ final class KbsTestWpdb
             return $this->format_row($rows[0] ?? null, $output);
         }
 
+        if (preg_match("/SELECT\\s+i\\.\\*,\\s*o\\.org_name\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+i\\s+LEFT JOIN\\s+([a-zA-Z0-9_]+)\\s+o\\s+ON\\s+o\\.org_id\\s*=\\s+i\\.org_id\\s+WHERE\\s+i\\.token\\s*=\\s*'([^']+)'\\s+AND\\s+i\\.email\\s*=\\s*'([^']+)'\\s+LIMIT\\s+1/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+            $invitesTable = $matches[1];
+            $orgsTable = $matches[2];
+            $token = stripslashes($matches[3]);
+            $email = stripslashes($matches[4]);
+            $orgNames = [];
+            foreach ($this->table($orgsTable) as $orgRow) {
+                $orgNames[(int) ($orgRow['org_id'] ?? 0)] = $orgRow['org_name'] ?? null;
+            }
+            foreach ($this->table($invitesTable) as $row) {
+                if ((string) ($row['token'] ?? '') !== $token || (string) ($row['email'] ?? '') !== $email) {
+                    continue;
+                }
+                $row['org_name'] = $orgNames[(int) ($row['org_id'] ?? 0)] ?? null;
+                return $this->format_row($row, $output);
+            }
+            return null;
+        }
+
         return null;
     }
 
     public function get_results(string $query, $output = OBJECT): array
     {
         $query = trim($query);
+        $normalized = preg_replace('/\s+/', ' ', $query) ?? $query;
 
         if (preg_match('/SHOW COLUMNS FROM\s+([a-zA-Z0-9_]+)/i', $query, $matches)) {
             $table = $matches[1];
@@ -702,7 +765,7 @@ final class KbsTestWpdb
             return $this->format_rows($rows, $output);
         }
 
-        if (preg_match("/SELECT\\s+id,\\s*contact_id,\\s*(?:invoice_number,\\s*)?customer_name,\\s*customer_email,\\s*date,\\s*due_date,\\s*total,\\s*status\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+ORDER\\s+BY\\s+date\\s+ASC,\\s+id\\s+ASC/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+        if (preg_match("/SELECT\\s+id,\\s*contact_id,\\s*(?:invoice_number,\\s*)?customer_name,\\s*customer_email,\\s*date,\\s*due_date,\\s*total,\\s*status(?:,\\s*email_sent_at)?\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+ORDER\\s+BY\\s+date\\s+ASC,\\s+id\\s+ASC/i", preg_replace('/\s+/', ' ', $query), $matches)) {
             $table = $matches[1];
             $orgId = (int) $matches[2];
             $rows = array_values(array_filter($this->table($table), static function (array $row) use ($orgId): bool {
@@ -734,7 +797,7 @@ final class KbsTestWpdb
             return $this->format_rows($rows, $output);
         }
 
-        if (preg_match("/SELECT\\s+expense_date,\\s*amount,\\s*status\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+ORDER\\s+BY\\s+expense_date\\s+ASC,\\s+id\\s+ASC/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+        if (preg_match("/SELECT\\s+.+\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+ORDER\\s+BY\\s+expense_date\\s+ASC,\\s+id\\s+ASC/i", preg_replace('/\s+/', ' ', $query), $matches) && str_ends_with($matches[1], 'vy_expenses')) {
             $table = $matches[1];
             $orgId = (int) $matches[2];
             $rows = array_values(array_filter($this->table($table), static function (array $row) use ($orgId): bool {
@@ -779,6 +842,24 @@ final class KbsTestWpdb
             });
 
             return $this->format_rows(array_slice($rows, 0, $limit), $output);
+        }
+
+        if (preg_match("/SELECT\\s+\\*\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+(.+)\\s+ORDER\\s+BY\\s+expense_date\\s+DESC,\\s+id\\s+DESC(?:\\s+LIMIT\\s+(\\d+)\\s+OFFSET\\s+(\\d+))?/i", $normalized, $matches) && str_ends_with($matches[1], 'vy_expenses')) {
+            $table = $matches[1];
+            $conditions = $matches[2];
+            $limit = isset($matches[3]) ? (int) $matches[3] : null;
+            $offset = isset($matches[4]) ? (int) $matches[4] : 0;
+            $rows = $this->filter_expense_rows_from_conditions($table, $conditions);
+            usort($rows, static function (array $left, array $right): int {
+                if (($left['expense_date'] ?? '') !== ($right['expense_date'] ?? '')) {
+                    return strcmp((string) ($right['expense_date'] ?? ''), (string) ($left['expense_date'] ?? ''));
+                }
+                return ((int) ($right['id'] ?? 0)) <=> ((int) ($left['id'] ?? 0));
+            });
+            if ($limit !== null) {
+                $rows = array_slice($rows, $offset, $limit);
+            }
+            return $this->format_rows($rows, $output);
         }
 
         return [];
@@ -950,6 +1031,64 @@ final class KbsTestWpdb
         return true;
     }
 
+    private function filter_expense_rows_from_conditions(string $table, string $conditions): array
+    {
+        $rows = $this->table($table);
+        $clauses = preg_split('/\s+AND\s+/i', trim($conditions)) ?: [];
+
+        foreach ($clauses as $clause) {
+            $clause = trim($clause);
+            if ($clause === '') {
+                continue;
+            }
+
+            $rows = array_values(array_filter($rows, static function (array $row) use ($clause): bool {
+                if (preg_match("/^org_id\\s*=\\s*(\\d+)$/i", $clause, $matches)) {
+                    return (int) ($row['org_id'] ?? 0) === (int) $matches[1];
+                }
+                if (preg_match("/^expense_date\\s*>=\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return (string) ($row['expense_date'] ?? '') >= stripslashes($matches[1]);
+                }
+                if (preg_match("/^expense_date\\s*<=\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return (string) ($row['expense_date'] ?? '') <= stripslashes($matches[1]);
+                }
+                if (preg_match("/^category\\s*=\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return (string) ($row['category'] ?? '') === stripslashes($matches[1]);
+                }
+                if (preg_match("/^document_type\\s*=\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return strtoupper((string) ($row['document_type'] ?? 'EXPENSE')) === strtoupper(stripslashes($matches[1]));
+                }
+                if (preg_match("/^status\\s*=\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return strtoupper((string) ($row['status'] ?? '')) === strtoupper(stripslashes($matches[1]));
+                }
+                if (preg_match("/^status\\s*<>\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return strtoupper((string) ($row['status'] ?? '')) !== strtoupper(stripslashes($matches[1]));
+                }
+                if (preg_match("/^payment_journal_id\\s+IS\\s+NULL$/i", $clause)) {
+                    return empty($row['payment_journal_id']);
+                }
+                if (preg_match("/^payment_journal_id\\s+IS\\s+NOT\\s+NULL$/i", $clause)) {
+                    return !empty($row['payment_journal_id']);
+                }
+                if (preg_match("/^due_date\\s+IS\\s+NOT\\s+NULL$/i", $clause)) {
+                    return !empty($row['due_date']);
+                }
+                if (preg_match("/^due_date\\s*<\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return (string) ($row['due_date'] ?? '') !== '' && (string) ($row['due_date'] ?? '') < stripslashes($matches[1]);
+                }
+                if (preg_match("/^due_date\\s*=\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return (string) ($row['due_date'] ?? '') === stripslashes($matches[1]);
+                }
+                if (preg_match("/^due_date\\s*>\\s*'([^']+)'$/i", $clause, $matches)) {
+                    return (string) ($row['due_date'] ?? '') !== '' && (string) ($row['due_date'] ?? '') > stripslashes($matches[1]);
+                }
+                return true;
+            }));
+        }
+
+        return $rows;
+    }
+
     private function format_row(?array $row, $output)
     {
         if ($row === null) {
@@ -979,6 +1118,7 @@ function kbs_test_reset_env(): void
         'rest_root' => 'https://example.test/wp-json/',
         'rest_nonce' => 'rest-nonce',
     ];
+    $GLOBALS['kbs_test_mail'] = [];
 
     if (!isset($GLOBALS['wpdb']) || !($GLOBALS['wpdb'] instanceof KbsTestWpdb)) {
         $GLOBALS['wpdb'] = new KbsTestWpdb();
@@ -1242,9 +1382,30 @@ if (!function_exists('wp_clear_auth_cookie')) {
     }
 }
 
-if (!function_exists('wp_mail')) {
-    function wp_mail($to, $subject, $message, $headers = []): bool
+if (!function_exists('plugin_dir_url')) {
+    function plugin_dir_url($file)
     {
+        return 'https://example.test/wp-content/plugins/khatabook/';
+    }
+}
+
+if (!function_exists('esc_attr')) {
+    function esc_attr($value)
+    {
+        return htmlspecialchars((string) $value, ENT_QUOTES, 'UTF-8');
+    }
+}
+
+if (!function_exists('wp_mail')) {
+    function wp_mail($to, $subject, $message, $headers = [], $attachments = []): bool
+    {
+        $GLOBALS['kbs_test_mail'][] = [
+            'to' => $to,
+            'subject' => $subject,
+            'message' => $message,
+            'headers' => $headers,
+            'attachments' => $attachments,
+        ];
         return true;
     }
 }
@@ -1276,6 +1437,28 @@ if (!function_exists('wp_insert_user')) {
         ]);
 
         return $nextId;
+    }
+}
+
+if (!function_exists('wp_delete_user')) {
+    function wp_delete_user($user_id): bool
+    {
+        $userId = (int) $user_id;
+        $user = $GLOBALS['kbs_test_state']['users'][$userId] ?? null;
+        if ($user) {
+            unset($GLOBALS['kbs_test_state']['users_by_email'][strtolower((string) ($user->user_email ?? ''))]);
+        }
+
+        unset($GLOBALS['kbs_test_state']['users'][$userId]);
+        unset($GLOBALS['kbs_test_state']['user_meta'][$userId]);
+
+        $table = $GLOBALS['wpdb']->usermeta;
+        $rows = array_values(array_filter(kbs_test_get_table($table), static function (array $row) use ($userId): bool {
+            return (int) ($row['user_id'] ?? 0) !== $userId;
+        }));
+        $GLOBALS['wpdb']->seed($table, $rows);
+
+        return true;
     }
 }
 

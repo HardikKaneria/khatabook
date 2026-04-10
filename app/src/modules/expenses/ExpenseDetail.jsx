@@ -48,6 +48,11 @@ export default function ExpenseDetail({ expense }) {
                 <p className="kb-muted">
                     GST: {expense.gst_rate ? `${expense.gst_rate}%` : "No GST"} · Input credit {expense.is_gst_input_eligible ? "eligible" : "not eligible"}
                 </p>
+                {expense.expense_account?.name ? (
+                    <p className="kb-muted">
+                        Expense Account: <strong>{expense.expense_account.name}</strong>
+                    </p>
+                ) : null}
             </section>
 
             <section className="kb-card" style={{ padding: 24 }}>
@@ -55,11 +60,25 @@ export default function ExpenseDetail({ expense }) {
                 {isPaid ? (
                     <p>
                         Paid via journal #{expense.payment_journal_id}. Money left account{" "}
-                        {expense.pay_from_account_name || expense.pay_from_account_id || ""}.
+                        {expense.payment_account?.name || expense.pay_from_account_name || expense.pay_from_account_id || "—"}.
                     </p>
                 ) : (
-                    <p>{isBill ? "This vendor bill is still open. A later settlement action is not available yet." : "No payment recorded for this expense yet."}</p>
+                    <p>
+                        {isBill
+                            ? "This vendor bill is still open. Use Record Bill Payment to settle it from a bank, cash, or wallet account."
+                            : "No payment recorded for this expense yet. Use Record Payment when you settle it later."}
+                    </p>
                 )}
+                {isBill && !isPaid ? (
+                    <p className="kb-muted" style={{ marginTop: 12 }}>
+                        Due state: <strong>{expense.due_state || "Not scheduled"}</strong>
+                    </p>
+                ) : null}
+                {!isPaid && !expense.can_settle && expense.settle_block_reason ? (
+                    <p className="kb-muted" style={{ marginTop: 12 }}>
+                        {expense.settle_block_reason}
+                    </p>
+                ) : null}
                 {!expense.can_archive && expense.archive_block_reason ? (
                     <p className="kb-muted" style={{ marginTop: 12 }}>
                         {expense.archive_block_reason}

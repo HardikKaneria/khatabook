@@ -20,6 +20,7 @@ export default function InvoiceDetail({
     const promises = invoice.promises || [];
     const history = invoice.history || [];
     const hasAdjustments = Number(invoice.credit_total || 0) > 0 || Number(invoice.debit_total || 0) > 0;
+    const riskSummary = invoice.risk_summary || null;
 
     return (
         <div className="space-y-4">
@@ -90,6 +91,56 @@ export default function InvoiceDetail({
                     </p>
                 ) : null}
             </section>
+
+            {riskSummary ? (
+                <section className="kb-card" style={{ padding: 24 }}>
+                    <div className="flex flex-wrap items-start justify-between gap-3" style={{ marginBottom: 12 }}>
+                        <div>
+                            <h3 className="kb-h3" style={{ margin: 0 }}>
+                                Invoice Risk Checks
+                            </h3>
+                            <p className="kb-muted" style={{ margin: "6px 0 0" }}>
+                                {riskSummary.headline}
+                            </p>
+                        </div>
+                        <span
+                            style={{
+                                display: "inline-flex",
+                                alignItems: "center",
+                                borderRadius: 999,
+                                padding: "6px 12px",
+                                background:
+                                    riskSummary.level === "critical"
+                                        ? "rgba(239, 68, 68, 0.14)"
+                                        : riskSummary.level === "warning"
+                                            ? "rgba(245, 158, 11, 0.16)"
+                                            : riskSummary.level === "info"
+                                                ? "rgba(59, 130, 246, 0.12)"
+                                                : "rgba(16, 185, 129, 0.12)",
+                                fontWeight: 700,
+                            }}
+                        >
+                            {riskSummary.level === "clear" ? "Ready" : riskSummary.level}
+                        </span>
+                    </div>
+                    {riskSummary.issues?.length ? (
+                        <div className="space-y-2">
+                            {riskSummary.issues.map((issue) => (
+                                <div key={issue.code} style={{ borderBottom: "1px solid var(--kb-color-border)", paddingBottom: 10 }}>
+                                    <strong>{issue.title}</strong>
+                                    <p className="kb-muted" style={{ margin: "4px 0 0" }}>
+                                        {issue.detail}
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <p className="kb-muted" style={{ margin: 0 }}>
+                            No current risk flags were found for this invoice.
+                        </p>
+                    )}
+                </section>
+            ) : null}
 
             <section className="kb-card" style={{ padding: 24 }}>
                 <h3 className="kb-h3" style={{ marginBottom: 12 }}>

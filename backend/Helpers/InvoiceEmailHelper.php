@@ -51,10 +51,30 @@ if (!function_exists('vy_send_invoice_email')) {
 
         $subject = strtr($subjectTemplate, $placeholders);
         $bodyRaw = strtr($bodyTemplate, $placeholders);
-        $bodyHtml = kbs_render_email_body($bodyRaw);
+        $emailBranding = vy_resolve_invoice_email_branding($orgId, $settings, $org);
+        $emailArgs = [
+            'eyebrow' => !empty($org->org_name) ? 'Invoice from ' . $org->org_name : 'Invoice',
+            'greeting' => !empty($invoice->customer_name) ? 'Hi ' . $invoice->customer_name . ',' : 'Hello,',
+            'cta_label' => !empty($pdfData['url']) ? 'Open PDF invoice' : '',
+            'cta_url' => !empty($pdfData['url']) ? $pdfData['url'] : '',
+            'logo_url' => $emailBranding['logo_url'],
+            'brand' => $emailBranding['brand'],
+            'attachments' => [$pdfData['path']],
+            'summary_rows' => [
+                ['label' => 'Invoice', 'value' => (string) $invoice->invoice_number],
+                ['label' => 'Customer', 'value' => (string) ($invoice->customer_name ?? 'Customer')],
+                ['label' => 'Amount', 'value' => trim(($invoice->currency ?? 'INR') . ' ' . number_format((float) $invoice->total, 2))],
+                ['label' => 'Invoice date', 'value' => (string) ($invoice->date ?? '')],
+                ['label' => 'Due date', 'value' => (string) ($invoice->due_date ?? 'On receipt')],
+            ],
+            'footer' => !empty($org->org_name)
+                ? sprintf('Issued by %s via Vyavhar.<br>Reply to this email if you need help with the attached invoice.', esc_html($org->org_name))
+                : 'Issued via Vyavhar.<br>Reply to this email if you need help with the attached invoice.',
+        ];
 
-        $headers = ['Content-Type: text/html; charset=UTF-8'];
-        $sent = wp_mail($recipients, $subject, $bodyHtml, $headers, [$pdfData['path']]);
+        $sent = function_exists('kbs_send_email')
+            ? kbs_send_email($recipients, $subject, $bodyRaw, $emailArgs)
+            : wp_mail($recipients, $subject, kbs_render_email_body($bodyRaw, $emailArgs), ['Content-Type: text/html; charset=UTF-8'], [$pdfData['path']]);
         if (!$sent) {
             return new WP_Error('vy_email_failed', 'Failed to send invoice email.', ['status' => 500]);
         }
@@ -154,5 +174,27 @@ if (!function_exists('vy_invoice_pdf_path_from_url')) {
         }
         $path = realpath(ABSPATH . ltrim($parsed, '/'));
         return $path ? wp_normalize_path($path) : null;
+    }
+}
+
+if (!function_exists('vy_resolve_invoice_email_branding')) {
+    function vy_resolve_invoice_email_branding(int $org_id, array $settings, object $org): array
+    {
+        $companySettings = function_exists('vy_fetch_org_settings_category')
+            ? vy_fetch_org_settings_category($org_id, 'company')
+            : [];
+
+        $logoUrl = '';
+        if (!empty($settings['logo_url'])) {
+            $logoUrl = esc_url_raw((string) $settings['logo_url']);
+        } elseif (!empty($companySettings['logo_url'])) {
+            $logoUrl = esc_url_raw((string) $companySettings['logo_url']);
+        }
+
+        return [
+            'brand' => 'Vyavhar',
+            'logo_url' => $logoUrl,
+            'org_name' => sanitize_text_field((string) ($org->org_name ?? '')),
+        ];
     }
 }

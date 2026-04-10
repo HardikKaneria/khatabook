@@ -6,28 +6,46 @@ This file lists only debt that is directly supported by the current codebase.
 
 ## 1. Product and UX Debt
 
-### 1.1 Dashboard receivables still rely on the latest 100 open invoices per status
+### 1.1 Expenses page still has a confirmed runtime helper crash
+
+Evidence:
+
+- `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx`
+
+Observed:
+
+- The page renders summary cards with `formatCurrency(...)` at multiple call sites.
+- No local `formatCurrency` helper exists in that file and nothing is imported for it.
+- This leaves the current Expenses route vulnerable to a direct runtime failure in a core business module.
+
+Impact:
+
+- This is a user-visible hard failure on an already-live operational screen and should be treated as the highest-priority frontend reliability gap.
+
+### 1.2 Dashboard home still fans out through multiple independent API calls
 
 Evidence:
 
 - `plugins/khatabook/app/src/pages/Home.jsx`
+- `plugins/khatabook/app/src/modules/accounts/api.js`
+- `plugins/khatabook/app/src/modules/expenses/api.js`
+- `plugins/khatabook/app/src/modules/invoices/api.js`
+- `plugins/khatabook/app/src/modules/payments/api.js`
+- `plugins/khatabook/app/src/modules/reports/api.js`
 - `plugins/khatabook/backend/Api/VyRestReports.php`
 
 Observed:
 
 - The home screen now shows real operational data.
-- A dedicated server-side receivables summary now exists for the reports module.
-- Invoice-side receivables behavior is now richer because recurring invoices, credit/debit adjustments, and promise tracking are active elsewhere in the product.
-- Open receivables are derived from:
-  - the latest 100 `SENT` invoices
-  - the latest 100 `PARTIAL` invoices
-- The page explicitly warns when this loaded set may be truncated.
+- Receivables now come from the live server-side summary endpoint rather than the older capped client approximation.
+- `Home.jsx` now uses `useAsyncResource`, but the page still loads invoices, payments, expenses, accounts, billing health, the owner daily brief, and multiple report cards through one large `loadHomeState()` fan-out.
+- Home still does not have a dedicated aggregated dashboard endpoint.
 
 Impact:
 
-- High-volume orgs can still undercount receivables and overdue totals on the dashboard until Home switches to the newer server-side summary path.
+- Dashboard reliability is better than before, but any future dashboard expansion still requires touching many endpoint calls in one page-level loader.
 
-### 1.2 Company settings storage still carries broader legacy category support than the active UI
+### 1.3 Company settings storage still carries broader legacy category support than the active UI
 
 Evidence:
 
@@ -45,23 +63,25 @@ Impact:
 
 - Future runs can still misread the generic settings backend as proof that hidden categories are live modules.
 
-### 1.3 Payables still stop short of a full vendor-bill and later-settlement workflow
+### 1.4 Reports page still orchestrates many report requests with bespoke page-level state
 
 Evidence:
 
-- `plugins/khatabook/backend/Api/VyRestExpenses.php`
-- `plugins/khatabook/app/src/modules/expenses/*`
+- `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx`
+- `plugins/khatabook/app/src/modules/reports/api.js`
+- `plugins/khatabook/backend/Api/VyRestReports.php`
+- `plugins/khatabook/backend/Helpers/ReportHelper.php`
 
 Observed:
 
-- Expenses now support create/list/detail/update/archive.
-- Payment journals are created only during the initial create request when `pay_from_account_id` is supplied.
-- The repository still has no first-class vendor-bill workflow on top of the expense/vendor foundations.
-- No later “record payment for an existing unpaid expense” flow was found.
+- Receivables and payables reporting are both now live in `ProfitTaxPage.jsx`.
+- Billing health and the owner daily brief are now also live in `ProfitTaxPage.jsx`.
+- The page still coordinates several separate report endpoints in one bespoke `Promise.all(...)` effect rather than a dedicated reports loader or per-panel shared resource strategy.
+- The report UI still mixes older bespoke layout/state handling with newer shared primitives used across other modules.
 
 Impact:
 
-- Expense records can now be corrected safely, but the payables lifecycle is still incomplete for teams that need vendor bills, due tracking, and later settlement after initial creation.
+- Reporting is operationally stronger now, but future report growth can still drift into a large page component with tightly coupled loading logic.
 
 ## 2. Architecture and Maintainability Debt
 
@@ -89,16 +109,17 @@ Evidence:
 - `plugins/khatabook/app/src/utils/buildQuery.js`
 - `plugins/khatabook/app/src/pages/Home.jsx`
 - `plugins/khatabook/app/src/pages/CompanySettings.jsx`
+- `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx`
 - `plugins/khatabook/app/src/modules/payments/PaymentsPage.jsx`
 
 Observed:
 
-- Active module hooks now share `useAsyncResource`, and active module APIs now share `buildQuery`.
-- Some important screens still fetch data ad hoc outside those shared foundations.
+- Active module hooks now share `useAsyncResource`, active module APIs now share `buildQuery`, and both `Home.jsx` and `CompanySettings.jsx` now use the shared async-loading primitive.
+- `ProfitTaxPage.jsx` is still on a bespoke page-level `Promise.all(...)` loading block outside the shared resource pattern.
 
 Impact:
 
-- Frontend behavior is better than before, but fetch/state handling can still drift between module-driven pages and bespoke dashboard/settings screens.
+- Frontend behavior is more consistent than before, but the reports surface can still drift from the normalized async/query pattern.
 
 ### 2.3 Shared state primitives now exist, but layout/state treatment still drifts outside the most active screens
 
@@ -106,18 +127,16 @@ Evidence:
 
 - `plugins/khatabook/app/src/components/ui/FeedbackState.jsx`
 - `plugins/khatabook/app/src/components/ui/InlineNotice.jsx`
-- `plugins/khatabook/app/src/pages/Home.jsx`
-- `plugins/khatabook/app/src/pages/CompanySettings.jsx`
 - `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx`
 
 Observed:
 
 - Active accounts/invoices/expenses/contacts/payments/users screens now share loading, empty, error, and inline notice primitives.
-- Dashboard, settings, and reports still retain more bespoke layout/state patterns.
+- Home and CompanySettings are closer to the shared async/state pattern now, but reports still retains more bespoke layout/state treatment than the main business modules.
 
 Impact:
 
-- UX consistency improved materially, but the app still has a split between the normalized business-module screens and older bespoke surfaces.
+- UX consistency improved materially, but the app still has a split between the normalized business-module screens and the larger reports surface.
 
 ### 2.4 Shared request/response contracts are implicit only
 
@@ -168,9 +187,46 @@ Impact:
 
 - Future runs can patch the wrong registration point and create drift between the controller-local route map and the live endpoint registry.
 
+### 2.7 OCR bill extraction is blocked by missing attachment and parser infrastructure
+
+Evidence:
+
+- `plugins/khatabook/backend/Media/ManagedImageUpload.php`
+- `plugins/khatabook/backend/Api/VyRestExpenses.php`
+- `plugins/khatabook/composer.json`
+- `plugins/khatabook/app/package.json`
+
+Observed:
+
+- Managed uploads currently support image-only org/logo flows, not expense-document ingestion.
+- The live expense API has no attachment model for bill images or PDFs.
+- No local OCR dependency or parser service exists in the PHP or frontend package manifests.
+
+Impact:
+
+- OCR bill extraction should stay blocked until there is an explicit dependency and product-direction decision rather than being faked through placeholder UI.
+
+### 2.8 Account lifecycle support is still only partial across API and SPA surfaces
+
+Evidence:
+
+- `plugins/khatabook/backend/Api/VyRestAccounts.php`
+- `plugins/khatabook/app/src/modules/accounts/api.js`
+- `plugins/khatabook/app/src/modules/accounts/*`
+
+Observed:
+
+- The backend supports account create, read, statement, and journal-aware delete/archive behavior.
+- No account update route exists in `VyRestAccounts.php`.
+- The active frontend accounts API client does not expose update or delete/archive helpers yet.
+
+Impact:
+
+- Operators cannot safely maintain account metadata or inactivate accounts through a complete first-class lifecycle, even though the rest of the financial modules already support richer maintenance flows.
+
 ## 3. Safety and Reliability Debt
 
-### 3.1 Some non-financial multi-step org/admin flows still lack the same rollback discipline as the core financial controllers
+### 3.1 Invite and org-member emails are still best-effort side effects after committed writes
 
 Evidence:
 
@@ -178,12 +234,12 @@ Evidence:
 
 Observed:
 
-- Core financial flows now have explicit transaction boundaries or compensating cleanup.
-- Org-user invite/member-management flows still perform multi-step membership, role, invite, and email work without the same rollback discipline.
+- Org-user invite/member-management writes now have transaction boundaries or compensating cleanup for the highest-risk membership and invite paths.
+- Invite reminders, invite sends, and access-granted emails still happen after committed DB writes and are not delivery-tracked beyond mail success/failure at send time.
 
 Impact:
 
-- Mid-flow failures can still leave invite/member state and notification side effects less predictable than invoice, expense, and payment flows.
+- Data writes are safer than before, but operators can still see successful org-state changes even when the follow-up notification email is not delivered.
 
 ### 3.2 Low-level boot and fallback logging still rely on raw PHP logs intentionally
 
@@ -231,6 +287,24 @@ Observed:
 Impact:
 
 - This improves convenience more than true secrecy and deserves caution in future auth/security work.
+
+### 3.5 Invoice payment posting still lacks duplicate-submit protection and truthful paid-state CTA gating
+
+Evidence:
+
+- `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
+- `plugins/khatabook/backend/Api/VyRestInvoices.php`
+
+Observed:
+
+- `InvoicePaymentForm.jsx` submits immediately with no in-flight locking or saving state on the submit button.
+- `InvoiceDetailPage.jsx` still renders the `Record Payment` action whenever an invoice is loaded, instead of hiding it when `balance_due` is already zero.
+- `VyRestInvoices::pay_invoice()` blocks overpayments and already-paid invoices, but it does not add a duplicate-submit or idempotency guard for repeated client submissions against the same invoice and payload.
+
+Impact:
+
+- Financial integrity still relies too heavily on a single server-side outstanding-balance check, and the UI can still suggest a payment action that should no longer be available.
 
 ## 4. Legacy and Consistency Debt
 

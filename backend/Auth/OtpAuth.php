@@ -83,9 +83,17 @@ class OtpAuth
         $message = "Use this one-time passcode to continue your " . ucfirst($context) . ":\n\n{$otp}\n\nThis code expires in 5 minutes. If you didn’t request it, you can safely ignore this email.";
         if (function_exists('kbs_send_email')) {
             $sent = \kbs_send_email($email, $subject, $message, [
-                'greeting'   => 'Hello,',
-                'cta_label'  => $context === 'login' ? 'Continue login' : 'Continue registration',
-                'cta_url'    => home_url('/login'),
+                'variant'      => 'otp',
+                'eyebrow'      => $context === self::OTP_CONTEXT_LOGIN ? 'Secure sign in' : 'Registration verification',
+                'greeting'     => 'Hello,',
+                'otp_code'     => $otp,
+                'helper_lines' => [
+                    'This code expires in 5 minutes.',
+                    'Enter it exactly as shown in the Vyavhar screen.',
+                    'If you did not request this code, you can safely ignore this email.',
+                ],
+                'cta_label'    => $context === self::OTP_CONTEXT_LOGIN ? 'Open login' : 'Open registration',
+                'cta_url'      => $context === self::OTP_CONTEXT_LOGIN ? home_url('/login') : home_url('/register'),
             ]);
         } else {
             $sent = wp_mail($email, $subject, $message);

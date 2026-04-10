@@ -139,6 +139,7 @@ It contains:
   - recurring profile create/list/get/update/manual-generate
   - invoice-linked credit/debit notes
   - invoice-linked promise-to-pay tracking
+  - invoice-detail risk summary payload
   - payment activity list via `GET /vy/v1/payments`
   - next invoice number
   - description suggestions
@@ -152,6 +153,9 @@ It contains:
 - `plugins/khatabook/backend/Helpers/InvoiceEditHelper.php`
   - Central invoice edit eligibility rules
 
+- `plugins/khatabook/backend/Helpers/InvoiceRiskHelper.php`
+  - rule-based invoice risk checks for totals, due dates, customer completeness, anomalies, and item/tax mismatches
+
 - `plugins/khatabook/backend/Helpers/InvoiceEmailHelper.php`
   - Customer-facing invoice email flow
 
@@ -161,12 +165,13 @@ It contains:
 #### Expenses
 
 - `plugins/khatabook/backend/Api/VyRestExpenses.php`
-  - list/create/get/update/archive for `vy_expenses`
-  - can create journal entries for paid expenses
+  - list/create/get/update/archive/settle for `vy_expenses`
+  - vendor-bill due-state, payment-state, and summary visibility on the same expense model
+  - can create journal entries both at create time and during later settlement, and exposes the paying account on detail payloads
 - `plugins/khatabook/backend/Helpers/ExpenseEditHelper.php`
-  - central journal-safe edit/archive rules
+  - central journal-safe edit/archive/settlement rules
 - `plugins/khatabook/app/src/modules/expenses/*`
-  - active create/list/detail/edit/archive UI
+  - active create/list/detail/edit/archive/settlement UI
 
 #### Payments visibility
 
@@ -187,11 +192,15 @@ It contains:
   - GST summary
   - tax estimate
   - receivables summary
+  - payables summary
   - monthly trends
+  - billing health
+  - owner daily brief
+  - revenue leak detector
 
 - `plugins/khatabook/backend/Helpers/ReportHelper.php`
   - Reads effective org/company/tax settings
-  - Computes report aggregates from `vy_*` invoices, payments, expenses, accounts, and journals
+  - Computes report aggregates from `vy_*` invoices, payments, expenses, accounts, journals, recurring profiles, and promises
 
 ### 2.5 Invoice template and rendering system
 
@@ -239,8 +248,15 @@ It contains:
 
 - `plugins/khatabook/backend/Email/EmailManager.php`
   - Canonical branded email shell
+  - Dedicated OTP email template rendering
+  - Attachments and structured summary rows for document emails
   - SMTP configuration resolution
   - `wp_mail` transport configuration
+
+- `plugins/khatabook/backend/Helpers/InvoiceEmailHelper.php`
+  - Customer-facing invoice email flow
+  - PDF attachment handling
+  - invoice-settings then company-settings logo precedence for email branding
 
 - `plugins/khatabook/backend/Notifications/InternalDocumentNotifier.php`
   - Internal invoice/expense creation notifications
@@ -588,6 +604,13 @@ Evidence:
 4. optional journal entry is created if a payment account is selected
 5. internal email notification is sent after creation
 
+### 5.5A Vendor bill visibility
+
+1. `ExpensesPage.jsx` loads `GET /vy/v1/expenses` and `GET /vy/v1/expenses/summary`
+2. `VyRestExpenses.php` filters live `vy_expenses` by document type, payment state, and due state
+3. the same controller computes open-bill, overdue-bill, and paid/unpaid summary cards
+4. `ExpenseDetail.jsx` renders expense-account and payment-account summaries from the detail payload
+
 ### 5.6 Invoice settings and preview
 
 1. `InvoiceSettingsPage.jsx` loads `/vy/v1/invoice-settings`
@@ -612,19 +635,15 @@ Evidence:
   - `api.js`
   - `hooks.js`
   - list/detail/form components
-- repeated local `useAsync` hook implementations in each module
+- shared `useAsyncResource` and `buildQuery` helpers now back the active module APIs/hooks and the normalized `Home.jsx` and `CompanySettings.jsx` loading flows
 - custom modal implementations inside module pages
 - auth + API boot handled globally in `App.jsx`
 
 ## 8. Important Gaps or Unclear Areas
 
 - Quotations appear only in legacy schema creation inside `plugins/khatabook/backend/Db/TableManager.php`. No active quotation controller, route, or page was found.
-- `plugins/khatabook/app/src/pages/Home.jsx` computes receivables from the latest 100 sent invoices and the latest 100 partial invoices, so high-volume orgs can still undercount dashboard receivables until a dedicated summary path exists.
-- Audit/version history for invoices, expenses, and payments was not found beyond:
-  - generic system logs
-  - registration logs
-  - OTP attempt logs
-  - `kbs_settings.version`
+- `plugins/khatabook/app/src/modules/reports/ProfitTaxPage.jsx` still coordinates several report endpoints through one bespoke page-level loader instead of a more modular reports resource pattern.
+- Record-level history is now active for invoices, expenses, and invoice payments through `vy_record_history`, but no broader generic versioned contract layer was found.
 - Shared typed contracts were not found. Payload shapes are implicit across PHP and JS.
 - Upload/media handling is implemented for invoice logos in `VyRestInvoiceSettings.php`. A broader media abstraction was not found.
 

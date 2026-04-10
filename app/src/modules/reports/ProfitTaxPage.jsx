@@ -1,11 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+    getBillingHealth,
     getGstSummary,
     getMonthlyTrends,
+    getOwnerDailyBrief,
+    getPayablesSummary,
     getProfitSummary,
     getReceivablesSummary,
+    getRevenueLeaks,
     getTaxEstimate,
 } from "./api";
+import RevenueLeakPanel from "./RevenueLeakPanel.jsx";
 
 const formatCurrency = (value) =>
     `₹ ${Number(value ?? 0).toLocaleString(undefined, {
@@ -48,6 +53,8 @@ const statusLabels = {
     PARTIAL: "Partially Paid",
     PAID: "Paid",
     VOID: "Void",
+    OPEN: "Open",
+    ARCHIVED: "Archived",
 };
 
 const calcTrendMax = (months = []) =>
@@ -64,7 +71,11 @@ export default function ProfitTaxPage() {
     const [gstSummary, setGstSummary] = useState(null);
     const [taxEstimate, setTaxEstimate] = useState(null);
     const [receivablesSummary, setReceivablesSummary] = useState(null);
+    const [payablesSummary, setPayablesSummary] = useState(null);
     const [monthlyTrends, setMonthlyTrends] = useState(null);
+    const [billingHealth, setBillingHealth] = useState(null);
+    const [ownerDailyBrief, setOwnerDailyBrief] = useState(null);
+    const [revenueLeaks, setRevenueLeaks] = useState(null);
     const [error, setError] = useState("");
 
     useEffect(() => {
@@ -77,15 +88,23 @@ export default function ProfitTaxPage() {
             getGstSummary(range),
             getTaxEstimate(range),
             getReceivablesSummary({ ...range, as_of: todayISO() }),
+            getPayablesSummary({ ...range, as_of: todayISO() }),
             getMonthlyTrends(range),
+            getBillingHealth({ ...range, as_of: todayISO() }),
+            getOwnerDailyBrief({ as_of: todayISO() }),
+            getRevenueLeaks({ ...range, as_of: todayISO() }),
         ])
-            .then(([profit, gst, tax, receivables, trends]) => {
+            .then(([profit, gst, tax, receivables, payables, trends, health, brief, leaks]) => {
                 if (cancelled) return;
                 setProfitSummary(profit || null);
                 setGstSummary(gst || null);
                 setTaxEstimate(tax || null);
                 setReceivablesSummary(receivables || null);
+                setPayablesSummary(payables || null);
                 setMonthlyTrends(trends || null);
+                setBillingHealth(health || null);
+                setOwnerDailyBrief(brief || null);
+                setRevenueLeaks(leaks || null);
             })
             .catch((err) => {
                 if (!cancelled) {
@@ -161,6 +180,104 @@ export default function ProfitTaxPage() {
         );
     };
 
+    const renderBillingHealth = () => {
+        if (!billingHealth) {
+            return (
+                <section className="reports-card">
+                    <div className="reports-card-header">
+                        <div>
+                            <h3>Billing Health Score</h3>
+                            <p>Health scoring is not available right now.</p>
+                        </div>
+                    </div>
+                </section>
+            );
+        }
+
+        return (
+            <section className="reports-card">
+                <div className="reports-card-header">
+                    <div>
+                        <h3>Billing Health Score</h3>
+                        <p>{billingHealth.headline} As of {billingHealth.as_of || todayISO()}.</p>
+                    </div>
+                </div>
+                <div className="reports-health-layout">
+                    <div className={`reports-health-score reports-health-score--${billingHealth.status || "steady"}`}>
+                        <strong>{billingHealth.score ?? 0}</strong>
+                        <span>/ {billingHealth.max_score ?? 100}</span>
+                    </div>
+                    <div className="reports-health-components">
+                        {(billingHealth.components || []).map((component) => (
+                            <article key={component.key} className="reports-health-component">
+                                <div className="reports-health-component__head">
+                                    <strong>{component.label}</strong>
+                                    <span>{component.points}/{component.max_points}</span>
+                                </div>
+                                <p>{component.detail}</p>
+                            </article>
+                        ))}
+                    </div>
+                </div>
+                {Array.isArray(billingHealth.actions) && billingHealth.actions.length ? (
+                    <div className="reports-brief-list" style={{ marginTop: 20 }}>
+                        {billingHealth.actions.map((action) => (
+                            <p key={action}>- {action}</p>
+                        ))}
+                    </div>
+                ) : null}
+            </section>
+        );
+    };
+
+    const renderOwnerDailyBrief = () => {
+        if (!ownerDailyBrief) {
+            return null;
+        }
+
+        return (
+            <section className="reports-card">
+                <div className="reports-card-header">
+                    <div>
+                        <h3>Owner Daily Brief</h3>
+                        <p>Yesterday’s movement and the follow-ups that matter today.</p>
+                    </div>
+                </div>
+                <div className="reports-summary-grid">
+                    <article className="reports-summary-card">
+                        <span className="reports-summary-label">Collections Yesterday</span>
+                        <strong>{formatCurrency(ownerDailyBrief.summary?.collections_yesterday_amount)}</strong>
+                        <p>{ownerDailyBrief.summary?.collections_yesterday_count || 0} payment entries</p>
+                    </article>
+                    <article className="reports-summary-card">
+                        <span className="reports-summary-label">Invoices Yesterday</span>
+                        <strong>{ownerDailyBrief.summary?.invoices_created_yesterday_count || 0}</strong>
+                        <p>{formatCurrency(ownerDailyBrief.summary?.invoices_created_yesterday_amount)} created</p>
+                    </article>
+                    <article className="reports-summary-card">
+                        <span className="reports-summary-label">Expenses Yesterday</span>
+                        <strong>{formatCurrency(ownerDailyBrief.summary?.expenses_added_yesterday_amount)}</strong>
+                        <p>{ownerDailyBrief.summary?.expenses_added_yesterday_count || 0} spend entries</p>
+                    </article>
+                    <article className="reports-summary-card">
+                        <span className="reports-summary-label">Promises Due Today</span>
+                        <strong>{formatCurrency(ownerDailyBrief.summary?.promises_due_today_amount)}</strong>
+                        <p>{ownerDailyBrief.summary?.promises_due_today_count || 0} customer commitments</p>
+                    </article>
+                </div>
+                {Array.isArray(ownerDailyBrief.priorities) && ownerDailyBrief.priorities.length ? (
+                    <div className="reports-brief-list">
+                        {ownerDailyBrief.priorities.map((priority) => (
+                            <p key={priority}>- {priority}</p>
+                        ))}
+                    </div>
+                ) : (
+                    <p className="kb-muted" style={{ margin: 0 }}>No urgent follow-ups are due today.</p>
+                )}
+            </section>
+        );
+    };
+
     const receivableCards = () => {
         if (!receivablesSummary) return null;
 
@@ -183,15 +300,37 @@ export default function ProfitTaxPage() {
         );
     };
 
-    const renderStatusTable = (rows = []) => {
+    const payableCards = () => {
+        if (!payablesSummary) return null;
+
+        const cards = [
+            { label: "Open Payables", value: formatCurrency(payablesSummary.outstanding_amount), detail: `${payablesSummary.open_bill_count ?? 0} vendor bills still open` },
+            { label: "Overdue Bills", value: formatCurrency(payablesSummary.overdue_amount), detail: `${payablesSummary.overdue_count ?? 0} bill${payablesSummary.overdue_count === 1 ? "" : "s"} overdue` },
+            { label: "Due Today", value: formatCurrency(payablesSummary.due_today_amount), detail: `${payablesSummary.due_today_count ?? 0} bill${payablesSummary.due_today_count === 1 ? "" : "s"} need payment today` },
+        ];
+
+        return (
+            <div className="reports-summary-grid">
+                {cards.map((card) => (
+                    <article key={card.label} className="reports-summary-card">
+                        <span className="reports-summary-label">{card.label}</span>
+                        <strong>{card.value}</strong>
+                        <p>{card.detail}</p>
+                    </article>
+                ))}
+            </div>
+        );
+    };
+
+    const renderStatusTable = (title, description, rows = [], emptyMessage = "No activity in the selected period.", countLabel = "Records") => {
         const visibleRows = rows.filter((row) => Number(row?.count ?? 0) > 0 || Number(row?.amount ?? 0) > 0);
 
         return (
             <section className="reports-card">
                 <div className="reports-card-header">
                     <div>
-                        <h3>Invoice Status Mix</h3>
-                        <p>Invoices issued in the selected period, grouped by current status.</p>
+                        <h3>{title}</h3>
+                        <p>{description}</p>
                     </div>
                 </div>
                 {visibleRows.length ? (
@@ -199,7 +338,7 @@ export default function ProfitTaxPage() {
                         <thead>
                             <tr>
                                 <th>Status</th>
-                                <th style={{ textAlign: "right" }}>Invoices</th>
+                                <th style={{ textAlign: "right" }}>{countLabel}</th>
                                 <th style={{ textAlign: "right" }}>Amount</th>
                             </tr>
                         </thead>
@@ -214,18 +353,18 @@ export default function ProfitTaxPage() {
                         </tbody>
                     </table>
                 ) : (
-                    <p className="kb-muted" style={{ margin: 0 }}>No invoice activity in the selected period.</p>
+                    <p className="kb-muted" style={{ margin: 0 }}>{emptyMessage}</p>
                 )}
             </section>
         );
     };
 
-    const renderAgingBuckets = (rows = []) => (
+    const renderAgingBuckets = (title, description, rows = [], emptyMessage, noun = "invoice") => (
         <section className="reports-card">
             <div className="reports-card-header">
                 <div>
-                    <h3>Receivables Aging</h3>
-                    <p>Open invoice balances as of {receivablesSummary?.as_of || todayISO()}.</p>
+                    <h3>{title}</h3>
+                    <p>{description}</p>
                 </div>
             </div>
             {rows.length ? (
@@ -234,34 +373,35 @@ export default function ProfitTaxPage() {
                         <div key={row.bucket} className="reports-aging-row">
                             <div>
                                 <strong>{row.label}</strong>
-                                <p>{row.count} invoice{row.count === 1 ? "" : "s"}</p>
+                                <p>{row.count} {noun}{row.count === 1 ? "" : "s"}</p>
                             </div>
                             <strong>{formatCurrency(row.amount)}</strong>
                         </div>
                     ))}
                 </div>
             ) : (
-                <p className="kb-muted" style={{ margin: 0 }}>No open receivables right now.</p>
+                <p className="kb-muted" style={{ margin: 0 }}>{emptyMessage}</p>
             )}
         </section>
     );
 
-    const renderTopCustomers = (rows = []) => (
+    const renderCounterpartyList = (title, description, rows = [], emptyMessage, noun) => (
         <section className="reports-card">
             <div className="reports-card-header">
                 <div>
-                    <h3>Top Customer Balances</h3>
-                    <p>Customers with the highest outstanding amount right now.</p>
+                    <h3>{title}</h3>
+                    <p>{description}</p>
                 </div>
             </div>
             {rows.length ? (
                 <div className="reports-customer-list">
                     {rows.map((row) => (
-                        <article key={`${row.label}-${row.email || "none"}`} className="reports-customer-row">
+                        <article key={`${row.label}-${row.email || row.bill_count || row.invoice_count || "none"}`} className="reports-customer-row">
                             <div>
                                 <strong>{row.label}</strong>
                                 <p>
-                                    {row.invoice_count} open invoice{row.invoice_count === 1 ? "" : "s"}
+                                    {(row.invoice_count ?? row.bill_count ?? 0)} open {noun}
+                                    {(row.invoice_count ?? row.bill_count ?? 0) === 1 ? "" : "s"}
                                     {row.email ? ` · ${row.email}` : ""}
                                 </p>
                             </div>
@@ -277,7 +417,7 @@ export default function ProfitTaxPage() {
                     ))}
                 </div>
             ) : (
-                <p className="kb-muted" style={{ margin: 0 }}>No customer balances to review.</p>
+                <p className="kb-muted" style={{ margin: 0 }}>{emptyMessage}</p>
             )}
         </section>
     );
@@ -386,6 +526,17 @@ export default function ProfitTaxPage() {
             ) : (
                 <>
                     {summaryCards()}
+                    {renderBillingHealth()}
+                    {renderOwnerDailyBrief()}
+                    <section className="reports-card">
+                        <div className="reports-card-header">
+                            <div>
+                                <h3>Revenue Leak Detector</h3>
+                                <p>Explainable leak warnings grounded in recurring runs, invoice follow-ups, promises, and draft state.</p>
+                            </div>
+                        </div>
+                        <RevenueLeakPanel summary={revenueLeaks} loading={loading} />
+                    </section>
 
                     <section className="reports-card">
                         <div className="reports-card-header">
@@ -398,12 +549,56 @@ export default function ProfitTaxPage() {
                             <>
                                 {receivableCards()}
                                 <div className="reports-grid-2">
-                                    {renderAgingBuckets(receivablesSummary.aging_buckets || [])}
-                                    {renderTopCustomers(receivablesSummary.top_customers || [])}
+                                    {renderAgingBuckets(
+                                        "Receivables Aging",
+                                        `Open invoice balances as of ${receivablesSummary?.as_of || todayISO()}.`,
+                                        receivablesSummary.aging_buckets || [],
+                                        "No open receivables right now.",
+                                        "invoice"
+                                    )}
+                                    {renderCounterpartyList(
+                                        "Top Customer Balances",
+                                        "Customers with the highest outstanding amount right now.",
+                                        receivablesSummary.top_customers || [],
+                                        "No customer balances to review.",
+                                        "invoice"
+                                    )}
                                 </div>
                             </>
                         ) : (
                             <p className="kb-muted" style={{ margin: 0 }}>Receivables data is not available right now.</p>
+                        )}
+                    </section>
+
+                    <section className="reports-card">
+                        <div className="reports-card-header">
+                            <div>
+                                <h3>Current Payables Snapshot</h3>
+                                <p>Open vendor bills as of {payablesSummary?.as_of || todayISO()}.</p>
+                            </div>
+                        </div>
+                        {payablesSummary ? (
+                            <>
+                                {payableCards()}
+                                <div className="reports-grid-2">
+                                    {renderAgingBuckets(
+                                        "Payables Aging",
+                                        `Open vendor bills by aging bucket as of ${payablesSummary?.as_of || todayISO()}.`,
+                                        payablesSummary.aging_buckets || [],
+                                        "No open vendor bills right now.",
+                                        "bill"
+                                    )}
+                                    {renderCounterpartyList(
+                                        "Top Vendor Balances",
+                                        "Vendors with the highest unpaid bill balances right now.",
+                                        payablesSummary.top_vendors || [],
+                                        "No vendor balances to review.",
+                                        "bill"
+                                    )}
+                                </div>
+                            </>
+                        ) : (
+                            <p className="kb-muted" style={{ margin: 0 }}>Payables data is not available right now.</p>
                         )}
                     </section>
 
@@ -413,7 +608,23 @@ export default function ProfitTaxPage() {
                     </div>
 
                     <div className="reports-grid-2">
-                        {renderStatusTable(receivablesSummary?.invoice_status || [])}
+                        {renderStatusTable(
+                            "Invoice Status Mix",
+                            "Invoices issued in the selected period, grouped by current status.",
+                            receivablesSummary?.invoice_status || [],
+                            "No invoice activity in the selected period.",
+                            "Invoices"
+                        )}
+                        {renderStatusTable(
+                            "Vendor Bill Status Mix",
+                            "Vendor bills recorded in the selected period, grouped by current settlement state.",
+                            payablesSummary?.bill_status || [],
+                            "No vendor bill activity in the selected period.",
+                            "Bills"
+                        )}
+                    </div>
+
+                    <div className="reports-grid-2">
                         {renderMonthlyTrends(monthlyTrends?.months || [])}
                     </div>
 
