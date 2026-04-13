@@ -10,7 +10,8 @@ import {
 	Popconfirm,
 } from "antd";
 import { MailOutlined, PlusOutlined, ReloadOutlined } from "@ant-design/icons";
-import { getAuth } from "../utils/authStorage";
+import { getAuth, saveAuth } from "../utils/authStorage";
+import { broadcastAuthUpdated, subscribeAuthUpdated } from "../utils/authEvents.js";
 import { useToast } from "../components/ToastProvider";
 import { makeDefaultApiFetch } from "../utils/apiClient";
 import Card from "../components/ui/Card.jsx";
@@ -79,6 +80,7 @@ const formatInviteDate = (value) => {
 
 export default function UsersAdmin() {
 	const [form] = Form.useForm();
+	const [orgForm] = Form.useForm();
 	const message = useToast();
 
 	const [auth, setAuth] = useState(null);
@@ -86,7 +88,9 @@ export default function UsersAdmin() {
 	const [users, setUsers] = useState([]);
 	const [loading, setLoading] = useState(true);
 	const [inviting, setInviting] = useState(false);
+	const [creatingOrg, setCreatingOrg] = useState(false);
 	const [savingRole, setSavingRole] = useState(null);
+	const [switchingOrgId, setSwitchingOrgId] = useState(null);
 
 	useEffect(() => {
 		let alive = true;
@@ -108,6 +112,18 @@ export default function UsersAdmin() {
 		};
 	}, [message]);
 
+	useEffect(() => {
+		return subscribeAuthUpdated(async (nextAuth) => {
+			if (nextAuth?.user) {
+				setAuth(nextAuth);
+				return;
+			}
+
+			const raw = await getAuth();
+			setAuth(raw || {});
+		});
+	}, []);
+
 	const orgId = useMemo(() => getOrgIdFromAuth(auth), [auth]);
 	const apiFetch = useMemo(() => {
 		if (!auth) return null;
@@ -115,6 +131,10 @@ export default function UsersAdmin() {
 	}, [auth, auth?.rest, auth?.token]);
 
 	const currentRole = useMemo(() => getCurrentOrgRole(auth, orgId), [auth, orgId]);
+	const organizations = useMemo(
+		() => (Array.isArray(auth?.user?.orgs) ? auth.user.orgs : []),
+		[auth]
+	);
 	const manageableRoles = useMemo(() => {
 		if (currentRole === "administrator") {
 			return ["company_admin", "c_manager", "c_employee"];
@@ -127,6 +147,7 @@ export default function UsersAdmin() {
 		}
 		return [];
 	}, [currentRole]);
+	const canCreateOrganizations = currentRole === "administrator" || currentRole === "company_admin";
 
 	const canViewUsers = manageableRoles.length > 0;
 	const roleOptionsForSelect = useMemo(
@@ -144,6 +165,13 @@ export default function UsersAdmin() {
 		(role) => manageableRoles.includes(normalizeRole(role)),
 		[manageableRoles]
 	);
+
+	const applyAuthUpdate = useCallback(async (nextAuth) => {
+		if (!nextAuth?.user) return;
+		await saveAuth(nextAuth);
+		setAuth(nextAuth);
+		broadcastAuthUpdated(nextAuth);
+	}, []);
 
 	const fetchUsers = useCallback(async () => {
 		if (!orgId || !apiFetch || !canViewUsers) {
@@ -271,6 +299,57 @@ export default function UsersAdmin() {
 			);
 		} catch (e) {
 			message.error(e.message || "Failed to remove user");
+		}
+	};
+
+	const handleSwitchOrganization = async (nextOrgId) => {
+		if (!apiFetch || !nextOrgId || Number(nextOrgId) === Number(orgId || 0)) {
+			return;
+		}
+
+		setSwitchingOrgId(Number(nextOrgId));
+		try {
+			const nextAuth = await apiFetch("/kbs/v1/active-org", {
+				method: "POST",
+				body: { org_id: Number(nextOrgId) },
+			});
+			await applyAuthUpdate(nextAuth);
+			message.success("Organization switched");
+		} catch (e) {
+			message.error(e.message || "Failed to switch organization");
+		} finally {
+			setSwitchingOrgId(null);
+		}
+	};
+
+	const handleCreateOrganization = async (values) => {
+		if (!apiFetch || !canCreateOrganizations) return;
+		const orgName = values.org_name?.trim().replace(/\s+/g, " ");
+		const industry = values.industry?.trim().replace(/\s+/g, " ");
+		if (!orgName || orgName.length < 3) {
+			message.error("Enter an organization name with at least 3 characters.");
+			return;
+		}
+
+		setCreatingOrg(true);
+		try {
+			const result = await apiFetch("/kbs/v1/organizations", {
+				method: "POST",
+				body: {
+					org_name: orgName,
+					industry: industry || undefined,
+				},
+			});
+			if (!result?.auth?.user) {
+				throw new Error("Organization created but the workspace session could not be refreshed.");
+			}
+			await applyAuthUpdate(result.auth);
+			orgForm.resetFields();
+			message.success(`${result?.organization?.org_name || orgName} is ready and selected.`);
+		} catch (e) {
+			message.error(e.message || "Failed to create organization");
+		} finally {
+			setCreatingOrg(false);
 		}
 	};
 
@@ -419,6 +498,11 @@ export default function UsersAdmin() {
 	const summaryCards = useMemo(
 		() => [
 			{
+				label: "Organizations",
+				value: organizations.length,
+				helper: "Workspaces you can switch between",
+			},
+			{
 				label: "Active members",
 				value: activeUsers.length,
 				helper: "Current org membership rows",
@@ -437,7 +521,47 @@ export default function UsersAdmin() {
 				helper: "Based on your org-scoped role",
 			},
 		],
-		[activeUsers.length, invitedUsers.length, manageableRoles]
+		[activeUsers.length, invitedUsers.length, manageableRoles, organizations.length]
+	);
+
+	const organizationColumns = useMemo(
+		() => [
+			{
+				title: "Organization",
+				key: "org_name",
+				render: (_, record) => (
+					<div>
+						<strong>{record.org_name || `Organization #${record.org_id}`}</strong>
+						<div className="ui-card-meta">
+							{record.is_primary ? "Primary membership" : "Additional membership"}
+						</div>
+					</div>
+				),
+			},
+			{
+				title: "Your role",
+				dataIndex: "role",
+				key: "role",
+				render: (role) => ROLE_LABELS[normalizeRole(role)] || role || "Member",
+			},
+			{
+				title: "Workspace",
+				key: "workspace",
+				render: (_, record) =>
+					Number(record.org_id) === Number(orgId) ? (
+						<strong>Current workspace</strong>
+					) : (
+						<Button
+							size="small"
+							onClick={() => handleSwitchOrganization(record.org_id)}
+							loading={switchingOrgId === Number(record.org_id)}
+						>
+							Switch
+						</Button>
+					),
+			},
+		],
+		[handleSwitchOrganization, orgId, switchingOrgId]
 	);
 
 	const renderInviteCard = () => (
@@ -481,6 +605,60 @@ export default function UsersAdmin() {
 			<p className="ui-inline-note">
 				You are currently operating as {ROLE_LABELS[currentRole] || currentRole || "User"}.
 			</p>
+		</Card>
+	);
+
+	const renderOrganizationsCard = () => (
+		<Card
+			title="Organizations"
+			subtitle="Create a separate workspace when you need a new company, and switch between the organizations you already manage."
+			actions={<span className="ui-card-meta">{organizations.length} workspaces</span>}
+		>
+			<Table
+				rowKey="org_id"
+				dataSource={organizations}
+				columns={organizationColumns}
+				pagination={false}
+				locale={{
+					emptyText: "No organizations are available for this account yet.",
+				}}
+			/>
+			{canCreateOrganizations ? (
+				<>
+					<div style={{ height: 16 }} />
+					<Form form={orgForm} layout="inline" onFinish={handleCreateOrganization} requiredMark={false}>
+						<Form.Item
+							name="org_name"
+							rules={[
+								{ required: true, message: "Organization name is required" },
+								{ min: 3, message: "Use at least 3 characters" },
+							]}
+						>
+							<Input placeholder="New organization name" style={{ width: 280 }} />
+						</Form.Item>
+						<Form.Item name="industry">
+							<Input placeholder="Industry (optional)" style={{ width: 220 }} />
+						</Form.Item>
+						<Form.Item>
+							<Button
+								type="primary"
+								htmlType="submit"
+								icon={<PlusOutlined />}
+								loading={creatingOrg}
+							>
+								Create Organization
+							</Button>
+						</Form.Item>
+					</Form>
+					<p className="ui-inline-note">
+						New organizations add you as Company Admin and switch this workspace immediately.
+					</p>
+				</>
+			) : (
+				<p className="ui-inline-note">
+					Only company admins can create additional organizations. Managers can still switch between the organizations they already help operate.
+				</p>
+			)}
 		</Card>
 	);
 
@@ -538,8 +716,8 @@ export default function UsersAdmin() {
 		<PageContainer>
 			<PageHeader
 				eyebrow="Team"
-				title="Users"
-				subtitle="Manage organization access, invite teammates, and update roles."
+				title="Users & Organizations"
+				subtitle="Manage organization access, invite teammates, create additional organizations, and switch workspaces."
 			/>
 			{children}
 		</PageContainer>
@@ -572,6 +750,7 @@ export default function UsersAdmin() {
 	return pageShell(
 		<>
 			{renderSummary()}
+			{renderOrganizationsCard()}
 			{renderInviteCard()}
 			{renderMembersTable()}
 			{renderInvitesTable()}

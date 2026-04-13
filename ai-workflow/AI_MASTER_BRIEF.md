@@ -15,7 +15,9 @@ The current product already supports:
 
 - OTP login and registration with admin approval
 - organization-scoped membership and org switching
-- accounts and journal-backed money movement
+- same-tab org/workspace refresh across the active organization shell and org-bound settings screens
+- company-admin creation of additional organizations with same-tab workspace refresh
+- accounts and journal-backed money movement with safe edit/archive/delete lifecycle handling
 - first-class customer and vendor contact management
 - customer statements from live invoice and payment activity
 - operational dashboard summaries on the SPA home screen
@@ -24,13 +26,16 @@ The current product already supports:
 - revenue leak detection grounded in recurring, promise, overdue, email-trace, and stale-draft signals
 - company settings limited to confirmed live settings categories plus company-logo upload for the confirmed fallback-render consumer
 - invoice creation, editing, payment posting, preview, PDF, and email
+- duplicate-safe invoice payment submission handling with truthful fully-paid actions
+- full-refund paid-invoice cancellation with journal-backed reversal and detail-level refund history
 - rule-based invoice risk checks before send/PDF actions
 - recurring billing profiles on live `vy_*` invoices with manual and scheduled generation
 - invoice-linked credit notes and debit notes that adjust receivables server-side
 - promise-to-pay tracking tied to invoice collections workflows
 - payment activity visibility beyond invoice detail
 - record-level financial history for invoices, expenses, and invoice payments
-- invoice template settings and logo upload
+- invoice template settings, the current 4 direct per-template PHP/HTML invoice documents, authenticated preview loading, and logo upload
+- truthful invoice template color/font settings across browser preview and PDF output for the current 4-template catalog
 - expense creation, editing, archive, later settlement, and detail tracking
 - profit, GST, tax, receivables aging, payables aging, billing health, owner-daily-brief, status mix, top-balance, and monthly trend reporting
 - branded document and OTP email delivery through the canonical Vyavhar email shell
@@ -69,6 +74,7 @@ It should not drift toward:
 - WordPress plugin bootstrap in `plugins/khatabook/main.php`
 - static REST controllers under `plugins/khatabook/backend/Api`
 - helper-driven shared business logic in `plugins/khatabook/backend/Helpers`
+- invoice templates now use shared data preparation plus direct per-template PHP/HTML files under `backend/templates/invoices`
 - direct `$wpdb` access is the dominant persistence style
 - business logic should remain org-scoped and server-authoritative
 
@@ -146,7 +152,7 @@ The product should feel:
 
 ### Testing
 - lightweight custom PHP harness in `plugins/khatabook/tests`
-- helper-level and controller-rule coverage now exists for auth, org access, invoice create/update/payment list, recurring billing generation, invoice credit/debit notes, promise-to-pay state changes, expense create/update/archive/settlement, report endpoints including payables summaries, transaction rollback behavior, system logging, and invoice template behavior
+- helper-level and controller-rule coverage now exists for auth, org access, account lifecycle rules, invoice create/update/payment list, duplicate payment protection, recurring billing generation, invoice credit/debit notes, promise-to-pay state changes, expense create/update/archive/settlement, report endpoints including payables summaries, transaction rollback behavior, system logging, and invoice template behavior
 - no browser test suite currently active
 - no shared typed contract layer currently active
 
@@ -172,6 +178,7 @@ Primary files:
 Purpose:
 - org membership resolution
 - active org persistence
+- company-admin organization creation
 - invite management
 - org user/role management
 - org-safe API behavior
@@ -188,6 +195,7 @@ Purpose:
 - ledger accounts
 - balances and statements
 - receipt/payment/transfer posting
+- safe edit/archive/delete behavior without breaking journal history
 
 Primary files:
 - `backend/Api/VyRestAccounts.php`
@@ -285,6 +293,7 @@ Purpose:
 - logo upload
 - email template settings
 - PDF/html rendering consistency
+- current approved 4-template catalog based on reference layouts
 
 Primary files:
 - `backend/Api/VyRestInvoiceSettings.php`
@@ -374,6 +383,7 @@ Future UI work must follow:
 - edit locking rules must remain enforceable server-side
 - recurring invoices must generate through the live invoice creation path so numbering, org safety, and document behavior stay consistent
 - credit/debit notes must adjust invoice balance due on the server, and payments must validate against the adjusted balance
+- paid-invoice refunds currently support full reversals only: the refund must be journal-backed, visible in invoice history, and must void the invoice without deleting prior payment records
 - promise-to-pay tracking is operational only; it must not be treated as payment settlement until a real payment is posted
 
 ### 8.6 Settings

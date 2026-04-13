@@ -5,7 +5,7 @@ defined('ABSPATH') || exit;
 
 class TableManager
 {
-    private const SCHEMA_VERSION = 8;
+    private const SCHEMA_VERSION = 9;
 
     public static function maybe_upgrade(): void
     {
@@ -361,7 +361,24 @@ class TableManager
             KEY idx_org (org_id)
         ) {$charset};";
 
-        /* 20) Vy Record History */
+        /* 20) Vy Invoice Refunds */
+        $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_refunds (
+            id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+            org_id BIGINT UNSIGNED NOT NULL,
+            invoice_id BIGINT UNSIGNED NOT NULL,
+            journal_id BIGINT UNSIGNED NULL,
+            payout_account_id BIGINT UNSIGNED NULL,
+            income_account_id BIGINT UNSIGNED NULL,
+            amount DECIMAL(18,2) NOT NULL DEFAULT 0,
+            date DATE NOT NULL,
+            reason LONGTEXT NULL,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (id),
+            KEY idx_org_invoice (org_id, invoice_id),
+            KEY idx_org_date (org_id, date)
+        ) {$charset};";
+
+        /* 21) Vy Record History */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_record_history (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -381,7 +398,7 @@ class TableManager
             KEY idx_created_at (created_at)
         ) {$charset};";
 
-        /* 21) Vy Expenses */
+        /* 22) Vy Expenses */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_expenses (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -408,7 +425,7 @@ class TableManager
             KEY idx_document_type (document_type)
         ) {$charset};";
 
-        /* 22) Vy Journal Entries */
+        /* 23) Vy Journal Entries */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_journal_entries (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -424,7 +441,7 @@ class TableManager
             KEY idx_source (source_module, source_id)
         ) {$charset};";
 
-        /* 23) Vy Journal Lines */
+        /* 24) Vy Journal Lines */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_journal_lines (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             journal_id BIGINT UNSIGNED NOT NULL,
@@ -440,11 +457,11 @@ class TableManager
             KEY idx_org_account (org_id, account_id)
         ) {$charset};";
 
-        /* 24) Invoice Template Settings */
+        /* 25) Invoice Template Settings */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_template_settings (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
-            default_template_id VARCHAR(32) NOT NULL DEFAULT 'minimal-clean',
+            default_template_id VARCHAR(32) NOT NULL DEFAULT 'modern-clean-blue',
             logo_url TEXT NULL,
             primary_color VARCHAR(16) NULL,
             accent_color VARCHAR(16) NULL,
@@ -463,7 +480,7 @@ class TableManager
             UNIQUE KEY uniq_org (org_id)
         ) {$charset};";
 
-        /* 25) Recurring Invoice Profiles */
+        /* 26) Recurring Invoice Profiles */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_recurring_profiles (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -494,7 +511,7 @@ class TableManager
             KEY idx_org_source_invoice (org_id, source_invoice_id)
         ) {$charset};";
 
-        /* 26) Recurring Invoice Profile Items */
+        /* 27) Recurring Invoice Profile Items */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_recurring_items (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -512,7 +529,7 @@ class TableManager
             KEY idx_org_profile (org_id, profile_id)
         ) {$charset};";
 
-        /* 27) Invoice Notes */
+        /* 28) Invoice Notes */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_notes (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,
@@ -531,7 +548,7 @@ class TableManager
             KEY idx_org_type_date (org_id, note_type, note_date)
         ) {$charset};";
 
-        /* 28) Invoice Promise Tracking */
+        /* 29) Invoice Promise Tracking */
         $sql[] = "CREATE TABLE {$wpdb->prefix}vy_invoice_promises (
             id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
             org_id BIGINT UNSIGNED NOT NULL,

@@ -60,6 +60,13 @@ class VyRestInvoicePreview
         foreach ($textOverrides as $key) {
             $value = $request->get_param($key);
             if ($value !== null && $value !== '') {
+                if (in_array($key, ['primary_color', 'accent_color'], true)) {
+                    $settings->$key = \vy_normalize_invoice_hex_color(
+                        (string) $value,
+                        (string) ($settings->$key ?? '')
+                    );
+                    continue;
+                }
                 $settings->$key = sanitize_text_field((string) $value);
             }
         }
@@ -92,11 +99,9 @@ class VyRestInvoicePreview
         $templateId = \vy_resolve_invoice_template_id($settings, $invoice, $templateOverride ?: null);
         $templatePath = \vy_get_invoice_template_path($templateId);
         if (!file_exists($templatePath)) {
-            $templateId = 'minimal-clean';
+            $templateId = \vy_get_invoice_template_default_settings()['default_template_id'];
             $templatePath = \vy_get_invoice_template_path($templateId);
         }
-        $template = vy_get_invoice_template($templateId);
-
         if (!$invoice) {
             $sample = vy_build_preview_sample_invoice($orgRow, $settings, $templateId);
             $invoice = $sample['invoice'];
@@ -109,30 +114,16 @@ class VyRestInvoicePreview
             ));
         }
 
-        $html = self::render_template($templatePath, [
-            'invoice'  => $invoice,
-            'items'    => $items,
-            'org'      => $orgRow,
-            'settings' => $settings,
-            'template' => $template,
-        ]);
+        $html = \vy_render_invoice_template_file(
+            $templatePath,
+            \vy_build_invoice_template_context($templateId, $invoice, $items, $orgRow, $settings)
+        );
 
         if ($html === null) {
             return new WP_Error('vy_preview_render_failed', 'Unable to render template.', ['status' => 500]);
         }
 
         return self::html_response($html);
-    }
-
-    private static function render_template(string $path, array $context): ?string
-    {
-        if (!file_exists($path)) {
-            return null;
-        }
-        ob_start();
-        extract($context, EXTR_SKIP);
-        require $path;
-        return ob_get_clean();
     }
 
     private static function html_response(string $html): WP_REST_Response

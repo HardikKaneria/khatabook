@@ -15,6 +15,7 @@ import {
     Switch,
 } from "antd";
 import { getAuth } from "../utils/authStorage";
+import { subscribeAuthUpdated } from "../utils/authEvents.js";
 import { useToast } from "../components/ToastProvider";
 import { makeDefaultApiFetch } from "../utils/apiClient";
 import PageContainer from "../components/ui/PageContainer.jsx";
@@ -101,9 +102,17 @@ function SaveBar({ onSave, saving, disabled }) {
 // ------------------------------- Page ----------------------------------------
 export default function SettingsAntD() {
     const message = useToast();
+    const [authRevision, setAuthRevision] = useState(0);
+
+    useEffect(() => {
+        return subscribeAuthUpdated(() => {
+            setAuthRevision((value) => value + 1);
+        });
+    }, []);
+
     const { data: auth = null, loading: authLoading, error: authError } = useAsyncResource(
         () => getAuth().then((raw) => raw || {}),
-        []
+        [authRevision]
     );
 
     const orgId = useMemo(() => {

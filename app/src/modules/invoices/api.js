@@ -18,6 +18,9 @@ export const updateInvoice = (id, payload = {}) =>
 export const payInvoice = (id, payload) =>
     apiClient.post(`${BASE}/invoices/${id}/pay`, payload);
 
+export const refundInvoice = (id, payload) =>
+    apiClient.post(`${BASE}/invoices/${id}/refund`, payload);
+
 export const getInvoiceDescriptions = (params = {}) =>
     apiClient.get(`${BASE}/invoices/descriptions${buildQuery(params)}`);
 

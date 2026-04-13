@@ -41,18 +41,13 @@ class Vy_Invoice_Pdf
         $templateId = \vy_resolve_invoice_template_id($settings, $invoice);
         $templatePath = \vy_get_invoice_template_path($templateId);
         if (!file_exists($templatePath)) {
-            $templateId = 'minimal-clean';
+            $templateId = \vy_get_invoice_template_default_settings()['default_template_id'];
             $templatePath = \vy_get_invoice_template_path($templateId);
         }
-        $template = vy_get_invoice_template($templateId);
-
-        $html = self::render_template($templatePath, [
-            'invoice'  => $invoice,
-            'items'    => $items,
-            'org'      => $org,
-            'settings' => $settings,
-            'template' => $template,
-        ]);
+        $html = \vy_render_invoice_template_file(
+            $templatePath,
+            \vy_build_invoice_template_context($templateId, $invoice, $items, $org, $settings)
+        );
         if ($html === null) {
             return new WP_Error('vy_pdf_template_error', 'Unable to render invoice template.', ['status' => 500]);
         }
@@ -63,17 +58,6 @@ class Vy_Invoice_Pdf
         }
 
         return self::store_pdf($org_id, $invoice, $templateId, $pdfBinary);
-    }
-
-    private static function render_template(string $path, array $context): ?string
-    {
-        if (!file_exists($path)) {
-            return null;
-        }
-        ob_start();
-        extract($context, EXTR_SKIP);
-        require $path;
-        return ob_get_clean();
     }
 
     private static function render_pdf(string $html)

@@ -1,6 +1,7 @@
 // src/App.jsx
 import { Suspense, lazy, useEffect, useState } from "react";
 import { loadAuth, clearAuth, saveAuth } from "./utils/authStorage";
+import { broadcastAuthUpdated } from "./utils/authEvents.js";
 import ToastProvider from "./components/ToastProvider";
 import apiClient, { configureApiClient } from "./lib/apiClient";
 import RouteLoadingState from "./components/ui/RouteLoadingState.jsx";
@@ -199,6 +200,18 @@ export default function App() {
         return () => window.removeEventListener("kbs-auth-invalid", onAuthInvalid);
     }, []);
 
+    useEffect(() => {
+        const onAuthUpdated = async (event) => {
+            const nextAuth = event?.detail?.auth || (await loadAuth());
+            syncAuthHeaders(nextAuth || null);
+            configureApiClient(nextAuth || null);
+            setAuth(nextAuth || null);
+        };
+
+        window.addEventListener("kbs-auth-updated", onAuthUpdated);
+        return () => window.removeEventListener("kbs-auth-updated", onAuthUpdated);
+    }, []);
+
     // 6) Lightweight auth check
     const isAuthed =
         !!auth?.token &&
@@ -249,7 +262,10 @@ export default function App() {
                 const nextAuth = await apiClient.post("/kbs/v1/active-org", { org_id: requestedOrgId });
                 if (cancelled) return;
                 await saveAuth(nextAuth);
+                syncAuthHeaders(nextAuth);
+                configureApiClient(nextAuth);
                 setAuth(nextAuth);
+                broadcastAuthUpdated(nextAuth);
             } catch (_) {
                 if (!cancelled) {
                     stripOrgQuery();
@@ -291,7 +307,10 @@ export default function App() {
             try {
                 const nextAuth = await apiClient.post("/kbs/v1/active-org", { org_id: Number(nextOrgId) });
                 await saveAuth(nextAuth);
+                syncAuthHeaders(nextAuth);
+                configureApiClient(nextAuth);
                 setAuth(nextAuth);
+                broadcastAuthUpdated(nextAuth);
                 navigate("/home", { replace: true });
             } finally {
                 setOrgSwitching(false);

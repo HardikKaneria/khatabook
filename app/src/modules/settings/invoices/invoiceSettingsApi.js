@@ -26,3 +26,40 @@ export async function removeInvoiceLogo() {
     });
     return response;
 }
+
+export async function getInvoicePreviewHtml(params = {}) {
+    const search = new URLSearchParams();
+
+    Object.entries(params).forEach(([key, value]) => {
+        if (value === undefined || value === null || value === "") {
+            return;
+        }
+        search.set(key, String(value));
+    });
+
+    const path = `/vy/v1/invoices/preview?${search.toString()}`;
+
+    try {
+        const response = await apiClient.get(path, {
+            responseType: "json",
+        });
+
+        if (typeof response === "string") {
+            return response;
+        }
+
+        if (response && typeof response.html === "string") {
+            return response.html;
+        }
+    } catch (error) {
+        const fallback = await apiClient.get(path, {
+            responseType: "text",
+        });
+        if (typeof fallback === "string") {
+            return fallback;
+        }
+        throw error;
+    }
+
+    return "";
+}

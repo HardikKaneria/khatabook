@@ -2,6 +2,52 @@
 
 use KBS\Api\OrgUsersController;
 
+kbs_test('company admin can create an additional organization and receives refreshed auth with the new workspace selected', function (): void {
+    kbs_test_add_user([
+        'ID' => 709,
+        'user_email' => 'org-create-admin@example.com',
+        'display_name' => 'Org Creator',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(709);
+    kbs_test_seed_org_membership(709, 78, 'company_admin', true, 'Current Org');
+
+    $result = OrgUsersController::create_organization(kbs_test_make_request('POST', '/kbs/v1/organizations', [
+        'org_name' => 'Growth Org',
+        'industry' => 'Consulting',
+    ]));
+    $response = kbs_assert_response($result, 201);
+    $data = $response->get_data();
+
+    kbs_assert_same('Growth Org', $data['organization']['org_name'] ?? null);
+    kbs_assert_same('company_admin', $data['organization']['role'] ?? null);
+    kbs_assert_same('Growth Org', $data['auth']['user']['org_name'] ?? null);
+
+    $roles = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'kbs_user_org_roles');
+    $orgs = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'kbs_organizations');
+
+    kbs_assert_count(2, $roles, 'Creating an organization should add exactly one new membership row for the creator.');
+    kbs_assert_count(2, $orgs, 'Creating an organization should add exactly one organization row.');
+    kbs_assert_same($data['organization']['org_id'] ?? null, get_user_meta(709, 'vy_active_org_id', true));
+});
+
+kbs_test('managers cannot create additional organizations', function (): void {
+    kbs_test_add_user([
+        'ID' => 710,
+        'user_email' => 'org-create-manager@example.com',
+        'display_name' => 'Org Manager',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(710);
+    kbs_test_seed_org_membership(710, 79, 'c_manager', true, 'Manager Org');
+
+    $result = OrgUsersController::create_organization(kbs_test_make_request('POST', '/kbs/v1/organizations', [
+        'org_name' => 'Blocked Org',
+    ]));
+    kbs_assert_wp_error($result, 'forbidden', 403);
+    kbs_assert_count(1, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'kbs_organizations'));
+});
+
 kbs_test('invite user grants existing users org membership and clears stale invites in one write path', function (): void {
     kbs_test_add_user([
         'ID' => 701,

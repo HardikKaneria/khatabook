@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { getInvoicePreviewHtml } from "./invoiceSettingsApi";
 
 export default function InvoiceTemplatePreview({
     selectedTemplateId,
@@ -15,21 +16,19 @@ export default function InvoiceTemplatePreview({
     invoiceId,
     fallbackMessage = "The preview is unavailable right now.",
 }) {
-    const previewUrl = useMemo(() => {
-        const params = new URLSearchParams();
-        if (selectedTemplateId) params.set("template_id", selectedTemplateId);
-        if (primaryColor) params.set("primary_color", primaryColor);
-        if (accentColor) params.set("accent_color", accentColor);
-        if (logoUrl) params.set("logo_url", logoUrl);
-        if (fontFamily) params.set("font_family", fontFamily);
-        if (footerText) params.set("footer_text", footerText);
-        if (termsAndConditions) params.set("terms_and_conditions", termsAndConditions);
-        if (bankDetails) params.set("bank_details", bankDetails);
-        params.set("show_tax_breakup", showTaxBreakup ? "1" : "0");
-        params.set("show_qr_code", showQrCode ? "1" : "0");
-        if (invoiceId) params.set("invoice_id", invoiceId);
-        return `/wp-json/vy/v1/invoices/preview?${params.toString()}`;
-    }, [
+    const previewParams = useMemo(() => ({
+        template_id: selectedTemplateId || "",
+        primary_color: primaryColor || "",
+        accent_color: accentColor || "",
+        logo_url: logoUrl || "",
+        font_family: fontFamily || "",
+        footer_text: footerText || "",
+        terms_and_conditions: termsAndConditions || "",
+        bank_details: bankDetails || "",
+        show_tax_breakup: showTaxBreakup ? "1" : "0",
+        show_qr_code: showQrCode ? "1" : "0",
+        invoice_id: invoiceId || "",
+    }), [
         selectedTemplateId,
         primaryColor,
         accentColor,
@@ -45,11 +44,40 @@ export default function InvoiceTemplatePreview({
 
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
+    const [html, setHtml] = useState("");
 
     useEffect(() => {
+        let alive = true;
         setLoading(true);
         setError(null);
-    }, [previewUrl]);
+        setHtml("");
+
+        (async () => {
+            try {
+                const nextHtml = await getInvoicePreviewHtml(previewParams);
+                if (!alive) {
+                    return;
+                }
+                if (!String(nextHtml || "").trim()) {
+                    throw new Error("Preview returned no HTML.");
+                }
+                setHtml(nextHtml || "");
+            } catch (nextError) {
+                if (!alive) {
+                    return;
+                }
+                setError(normalizePreviewError(nextError));
+            } finally {
+                if (alive) {
+                    setLoading(false);
+                }
+            }
+        })();
+
+        return () => {
+            alive = false;
+        };
+    }, [previewParams]);
 
     return (
         <aside className="invoice-settings-preview">
@@ -68,25 +96,38 @@ export default function InvoiceTemplatePreview({
             <div className="preview-frame">
                 {loading && !error ? <div className="preview-skeleton">Loading preview…</div> : null}
                 {error ? (
-                    <div className="preview-error">{fallbackMessage}</div>
+                    <div className="preview-error">{error || fallbackMessage}</div>
                 ) : (
                     <iframe
                         title="Invoice preview"
-                        src={previewUrl}
-                        onLoad={() => setLoading(false)}
-                        onError={() => {
-                            setLoading(false);
-                            setError("error");
-                        }}
+                        srcDoc={html}
                         style={{
                             width: "100%",
                             height: "100%",
                             border: "none",
                         }}
-                        sandbox="allow-same-origin allow-scripts"
+                        sandbox="allow-same-origin"
                     />
                 )}
             </div>
         </aside>
     );
+}
+
+function normalizePreviewError(error) {
+    const raw = error?.message || "";
+    if (!raw) {
+        return "The preview is unavailable right now.";
+    }
+
+    try {
+        const parsed = JSON.parse(raw);
+        if (parsed?.message) {
+            return parsed.message;
+        }
+    } catch (parseError) {
+        // no-op: plain text errors are valid here
+    }
+
+    return raw;
 }

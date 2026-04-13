@@ -165,6 +165,11 @@ After meaningful work, update:
 - `AI_UX_DOCTRINE.md`
 - `AI_IMPLEMENTATION_PLAYBOOK.md`
 
+### When product-feature-list coverage changed
+- `product_feature_list.md` stays the requested-scope reference
+- `PRODUCT_FEATURE_STATUS.md` must reflect the current code-backed implementation status
+- `PRODUCT_FEATURE_PROGRESS_LOG.md` must receive an appended entry summarizing the change
+
 Do not leave workflow docs stale after real product or architecture changes.
 
 ---

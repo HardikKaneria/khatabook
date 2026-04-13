@@ -35,6 +35,11 @@ class VyRestAccounts
             'permission_callback' => [__CLASS__, 'require_auth'],
         ]);
         register_rest_route(self::NS, '/accounts/(?P<id>\d+)', [
+            'methods'             => WP_REST_Server::EDITABLE,
+            'callback'            => [__CLASS__, 'update_account'],
+            'permission_callback' => [__CLASS__, 'require_auth'],
+        ]);
+        register_rest_route(self::NS, '/accounts/(?P<id>\d+)', [
             'methods'             => WP_REST_Server::DELETABLE,
             'callback'            => [__CLASS__, 'delete_account'],
             'permission_callback' => [__CLASS__, 'require_auth'],
@@ -197,6 +202,8 @@ class VyRestAccounts
         }
 
         $account['balance'] = VyJournalEngine::get_account_balance((int) $org, (int) $account['id'], $account);
+        $hasUsage = self::account_has_journal_usage((int) $org, (int) $account['id']);
+        $account['lifecycle'] = self::build_lifecycle_payload($account, $hasUsage);
 
         if ($account['sub_type'] === 'BANK') {
             global $wpdb;
@@ -211,6 +218,93 @@ class VyRestAccounts
         }
 
         return new WP_REST_Response($account, 200);
+    }
+
+    public static function update_account(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $accountId = (int) $request['id'];
+        $account = self::fetch_account((int) $org, $accountId);
+        if (!$account) {
+            return new WP_Error('vy_not_found', 'Account not found.', ['status' => 404]);
+        }
+
+        if (!empty($account['is_system'])) {
+            return new WP_Error('vy_system_account_locked', 'System accounts cannot be edited.', ['status' => 400]);
+        }
+
+        $body = (array) $request->get_json_params();
+        $hasUsage = self::account_has_journal_usage((int) $org, $accountId);
+        $normalized = self::normalize_account_payload($body, $account);
+
+        if ($normalized['name'] === '' || !in_array($normalized['type'], ['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE'], true)) {
+            return new WP_Error('vy_bad_account', 'Account name and valid type are required.', ['status' => 400]);
+        }
+        if (!in_array($normalized['status'], ['ACTIVE', 'ARCHIVED'], true)) {
+            return new WP_Error('vy_bad_account_status', 'Account status must be ACTIVE or ARCHIVED.', ['status' => 400]);
+        }
+
+        $lockedFields = self::locked_account_fields($account, $normalized);
+        if ($hasUsage && $lockedFields) {
+            return new WP_Error(
+                'vy_account_locked_fields',
+                'Accounts with historical journal activity can only update name, code, and active status.',
+                [
+                    'status' => 400,
+                    'fields' => $lockedFields,
+                ]
+            );
+        }
+
+        global $wpdb;
+        $timestamp = current_time('mysql', true);
+        $updateData = [
+            'name'       => $normalized['name'],
+            'code'       => $normalized['code'],
+            'status'     => $normalized['status'],
+            'updated_at' => $timestamp,
+        ];
+        $formats = ['%s', '%s', '%s', '%s'];
+
+        if (!$hasUsage) {
+            $updateData['type'] = $normalized['type'];
+            $updateData['sub_type'] = $normalized['sub_type'];
+            $updateData['currency'] = $normalized['currency'];
+            $updateData['opening_balance'] = $normalized['opening_balance'];
+            $updateData['opening_balance_type'] = $normalized['opening_balance_type'];
+            $formats = ['%s', '%s', '%s', '%s', '%s', '%s', '%s', '%f', '%s'];
+        }
+
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'vy_accounts',
+            $updateData,
+            ['org_id' => $org, 'id' => $accountId],
+            $formats,
+            ['%d', '%d']
+        );
+
+        if ($updated === false) {
+            return new WP_Error('vy_account_update_failed', 'Failed to update account.', ['status' => 500]);
+        }
+
+        if (!$hasUsage) {
+            self::sync_bank_account_meta((int) $org, $accountId, $normalized['sub_type'], $body['bank_meta'] ?? null);
+        }
+
+        $fresh = self::fetch_account((int) $org, $accountId);
+        if ($fresh) {
+            $fresh['balance'] = VyJournalEngine::get_account_balance((int) $org, (int) $fresh['id'], $fresh);
+            $fresh['lifecycle'] = self::build_lifecycle_payload($fresh, $hasUsage);
+        }
+
+        return new WP_REST_Response([
+            'success' => true,
+            'account' => $fresh,
+        ], 200);
     }
 
     /**
@@ -318,6 +412,12 @@ class VyRestAccounts
         if (!$fromAccount || !$toAccount) {
             return new WP_Error('vy_not_found', 'Account not found for transfer.', ['status' => 404]);
         }
+        if (($archivedError = self::ensure_account_is_active($fromAccount, 'vy_account_archived', 'Archived accounts cannot be used for new transfers.')) instanceof WP_Error) {
+            return $archivedError;
+        }
+        if (($archivedError = self::ensure_account_is_active($toAccount, 'vy_account_archived', 'Archived accounts cannot be used for new transfers.')) instanceof WP_Error) {
+            return $archivedError;
+        }
 
         $result = VyJournalEngine::create_journal_entry([
             'org_id'        => (int) $org,
@@ -372,6 +472,12 @@ class VyRestAccounts
         $creditAccount = self::fetch_account((int) $org, $creditAccountId);
         if (!$debitAccount || !$creditAccount) {
             return new WP_Error('vy_not_found', 'Account not found.', ['status' => 404]);
+        }
+        if (($archivedError = self::ensure_account_is_active($debitAccount, 'vy_account_archived', 'Archived accounts cannot be used for new transactions.')) instanceof WP_Error) {
+            return $archivedError;
+        }
+        if (($archivedError = self::ensure_account_is_active($creditAccount, 'vy_account_archived', 'Archived accounts cannot be used for new transactions.')) instanceof WP_Error) {
+            return $archivedError;
         }
 
         $result = VyJournalEngine::create_journal_entry([
@@ -460,12 +566,147 @@ class VyRestAccounts
     private static function account_has_journal_usage(int $org_id, int $account_id): bool
     {
         global $wpdb;
-        $count = (int) $wpdb->get_var($wpdb->prepare(
-            "SELECT COUNT(*) FROM {$wpdb->prefix}vy_journal_lines WHERE org_id = %d AND account_id = %d",
+        $match = $wpdb->get_row($wpdb->prepare(
+            "SELECT id FROM {$wpdb->prefix}vy_journal_lines WHERE org_id = %d AND account_id = %d LIMIT 1",
+            $org_id,
+            $account_id
+        ), ARRAY_A);
+        return !empty($match);
+    }
+
+    private static function normalize_account_payload(array $body, array $account): array
+    {
+        $subType = array_key_exists('sub_type', $body)
+            ? trim((string) sanitize_text_field((string) ($body['sub_type'] ?? '')))
+            : (string) ($account['sub_type'] ?? '');
+
+        return [
+            'name' => sanitize_text_field((string) ($body['name'] ?? ($account['name'] ?? ''))),
+            'code' => self::normalize_nullable_string($body['code'] ?? ($account['code'] ?? null)),
+            'type' => strtoupper(sanitize_text_field((string) ($body['type'] ?? ($account['type'] ?? '')))),
+            'sub_type' => $subType !== '' ? strtoupper($subType) : null,
+            'currency' => strtoupper(sanitize_text_field((string) ($body['currency'] ?? ($account['currency'] ?? 'INR')))),
+            'opening_balance' => array_key_exists('opening_balance', $body)
+                ? (float) $body['opening_balance']
+                : (float) ($account['opening_balance'] ?? 0),
+            'opening_balance_type' => strtoupper(sanitize_text_field((string) ($body['opening_balance_type'] ?? ($account['opening_balance_type'] ?? 'DEBIT')))) === 'CREDIT'
+                ? 'CREDIT'
+                : 'DEBIT',
+            'status' => strtoupper(sanitize_text_field((string) ($body['status'] ?? ($account['status'] ?? 'ACTIVE')))),
+        ];
+    }
+
+    private static function locked_account_fields(array $account, array $normalized): array
+    {
+        $locked = [];
+
+        if (strtoupper((string) ($account['type'] ?? '')) !== $normalized['type']) {
+            $locked[] = 'type';
+        }
+        if (strtoupper((string) ($account['sub_type'] ?? '')) !== strtoupper((string) ($normalized['sub_type'] ?? ''))) {
+            $locked[] = 'sub_type';
+        }
+        if (strtoupper((string) ($account['currency'] ?? 'INR')) !== $normalized['currency']) {
+            $locked[] = 'currency';
+        }
+        if ((float) ($account['opening_balance'] ?? 0) !== (float) $normalized['opening_balance']) {
+            $locked[] = 'opening_balance';
+        }
+        if (strtoupper((string) ($account['opening_balance_type'] ?? 'DEBIT')) !== $normalized['opening_balance_type']) {
+            $locked[] = 'opening_balance_type';
+        }
+
+        return $locked;
+    }
+
+    private static function build_lifecycle_payload(array $account, bool $hasUsage): array
+    {
+        $isSystem = !empty($account['is_system']);
+        $status = strtoupper((string) ($account['status'] ?? 'ACTIVE'));
+
+        return [
+            'has_journal_usage' => $hasUsage,
+            'can_edit' => !$isSystem,
+            'can_edit_structure' => !$isSystem && !$hasUsage,
+            'can_change_status' => !$isSystem,
+            'can_delete_permanently' => !$isSystem && !$hasUsage,
+            'status' => $status,
+            'status_note' => $status === 'ARCHIVED'
+                ? 'Archived accounts stay in history but cannot be used for new transactions.'
+                : ($hasUsage
+                    ? 'This account has journal history. Only display fields and active status can change.'
+                    : 'This account can still be updated or deleted because it has no journal history.'),
+        ];
+    }
+
+    private static function sync_bank_account_meta(int $org_id, int $account_id, ?string $sub_type, $bankMeta): void
+    {
+        global $wpdb;
+        $table = $wpdb->prefix . 'vy_bank_accounts';
+
+        if ($sub_type !== 'BANK') {
+            $wpdb->delete($table, ['org_id' => $org_id, 'account_id' => $account_id], ['%d', '%d']);
+            return;
+        }
+
+        if (!is_array($bankMeta)) {
+            return;
+        }
+
+        $data = [
+            'org_id' => $org_id,
+            'account_id' => $account_id,
+            'bank_name' => sanitize_text_field((string) ($bankMeta['bank_name'] ?? '')),
+            'branch' => sanitize_text_field((string) ($bankMeta['branch'] ?? '')),
+            'account_number_masked' => sanitize_text_field((string) ($bankMeta['account_number_masked'] ?? '')),
+            'ifsc' => sanitize_text_field((string) ($bankMeta['ifsc'] ?? '')),
+            'integration_meta' => isset($bankMeta['integration_meta']) ? wp_json_encode($bankMeta['integration_meta']) : null,
+            'updated_at' => current_time('mysql', true),
+        ];
+
+        $existingId = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$table} WHERE org_id = %d AND account_id = %d LIMIT 1",
             $org_id,
             $account_id
         ));
-        return $count > 0;
+
+        if ($existingId > 0) {
+            $wpdb->update(
+                $table,
+                array_diff_key($data, ['org_id' => true, 'account_id' => true]),
+                ['id' => $existingId],
+                ['%s', '%s', '%s', '%s', '%s', '%s'],
+                ['%d']
+            );
+            return;
+        }
+
+        $data['created_at'] = current_time('mysql', true);
+        $wpdb->insert(
+            $table,
+            $data,
+            ['%d', '%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s']
+        );
+    }
+
+    private static function ensure_account_is_active(array $account, string $code, string $message): ?WP_Error
+    {
+        $status = strtoupper((string) ($account['status'] ?? 'ACTIVE'));
+        if ($status === 'ARCHIVED') {
+            return new WP_Error($code, $message, ['status' => 400]);
+        }
+
+        return null;
+    }
+
+    private static function normalize_nullable_string($value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $normalized = trim((string) sanitize_text_field((string) $value));
+        return $normalized === '' ? null : $normalized;
     }
 
 }

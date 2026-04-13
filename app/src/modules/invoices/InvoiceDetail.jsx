@@ -16,10 +16,12 @@ export default function InvoiceDetail({
 
     const items = invoice.items || [];
     const payments = invoice.payments || [];
+    const refunds = invoice.refunds || [];
     const notes = invoice.adjustments || [];
     const promises = invoice.promises || [];
     const history = invoice.history || [];
     const hasAdjustments = Number(invoice.credit_total || 0) > 0 || Number(invoice.debit_total || 0) > 0;
+    const hasRefunds = Number(invoice.refunded_amount || 0) > 0 || refunds.length > 0;
     const riskSummary = invoice.risk_summary || null;
 
     return (
@@ -53,14 +55,24 @@ export default function InvoiceDetail({
                             ₹ {formatCurrency(invoice.adjusted_total ?? invoice.total)}
                         </p>
                         <p className="kb-muted" style={{ margin: 0 }}>
-                            Paid: ₹ {formatCurrency(invoice.paid_amount)} · Due: ₹{" "}
+                            Collected: ₹ {formatCurrency(invoice.paid_amount)} · Due: ₹{" "}
                             {formatCurrency(invoice.balance_due || 0)}
                         </p>
+                        {hasRefunds ? (
+                            <p className="kb-muted" style={{ margin: "6px 0 0" }}>
+                                Refunded: ₹ {formatCurrency(invoice.refunded_amount || 0)} · Net kept: ₹ {formatCurrency(invoice.net_paid_amount || 0)}
+                            </p>
+                        ) : null}
                     </div>
                 </div>
                 {hasAdjustments ? (
                     <p className="kb-muted" style={{ marginTop: 12 }}>
                         Base total ₹ {formatCurrency(invoice.total)} · Debit notes ₹ {formatCurrency(invoice.debit_total || 0)} · Credit notes ₹ {formatCurrency(invoice.credit_total || 0)}
+                    </p>
+                ) : null}
+                {hasRefunds ? (
+                    <p className="kb-muted" style={{ marginTop: 12 }}>
+                        This invoice has been refunded and voided. Historical payment entries are preserved for traceability.
                     </p>
                 ) : null}
                 {invoice.recurring_profile ? (
@@ -211,6 +223,40 @@ export default function InvoiceDetail({
                     </div>
                 ) : (
                     <p>No payments recorded.</p>
+                )}
+            </section>
+
+            <section className="kb-card" style={{ padding: 24 }}>
+                <h3 className="kb-h3" style={{ marginBottom: 12 }}>
+                    Refunds
+                </h3>
+                {refunds.length ? (
+                    <div className="space-y-2">
+                        {refunds.map((refund) => (
+                            <div key={refund.id} style={{ display: "flex", justifyContent: "space-between", gap: 16, borderBottom: "1px solid var(--kb-color-border)", paddingBottom: 10 }}>
+                                <div>
+                                    <p style={{ margin: 0, fontWeight: 600 }}>
+                                        ₹ {formatCurrency(refund.amount)}
+                                    </p>
+                                    <p className="kb-muted" style={{ margin: "4px 0 0" }}>
+                                        {refund.date} · {refund.reason || "Invoice refund"}
+                                    </p>
+                                    {(refund.payout_account?.name || refund.income_account?.name) ? (
+                                        <p className="kb-muted" style={{ margin: "4px 0 0" }}>
+                                            {refund.payout_account?.name ? `Payout: ${refund.payout_account.name}` : ""}
+                                            {refund.payout_account?.name && refund.income_account?.name ? " · " : ""}
+                                            {refund.income_account?.name ? `Income reversal: ${refund.income_account.name}` : ""}
+                                        </p>
+                                    ) : null}
+                                </div>
+                                <p className="kb-muted" style={{ margin: 0 }}>
+                                    Journal #{refund.journal_id || "—"}
+                                </p>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <p>No refunds recorded.</p>
                 )}
             </section>
 

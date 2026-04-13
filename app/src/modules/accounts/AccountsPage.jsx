@@ -15,7 +15,8 @@ export default function AccountsPage() {
     const [refreshKey, setRefreshKey] = useState(0);
     const [showAccountForm, setShowAccountForm] = useState(false);
     const [actionError, setActionError] = useState("");
-    const { data, loading, error } = useAccounts({}, refreshKey);
+    const [showInactive, setShowInactive] = useState(false);
+    const { data, loading, error } = useAccounts({ include_archived: showInactive ? 1 : 0 }, refreshKey);
     const accounts = data || [];
 
     const goToAccount = (id) => {
@@ -67,6 +68,19 @@ export default function AccountsPage() {
                 className: "kb-table__cell--number",
                 render: (_, record) => formatCurrency(record.currentBalance ?? record.balance),
             },
+            {
+                title: "Status",
+                dataIndex: "status",
+                key: "status",
+                render: (value) =>
+                    value === "ARCHIVED" ? (
+                        <span className="kb-table__pill" style={{ background: "rgba(15,23,42,0.08)", color: "var(--kb-color-text)" }}>
+                            Inactive
+                        </span>
+                    ) : (
+                        "Active"
+                    ),
+            },
         ];
         return (
             <Table
@@ -90,7 +104,7 @@ export default function AccountsPage() {
         }
     };
 
-    const moneyAccounts = accounts.filter(isMoneyAccount);
+    const moneyAccounts = accounts.filter((account) => isMoneyAccount(account) && (account?.status || "ACTIVE") !== "ARCHIVED");
 
     return (
         <div className="accounts-page">
@@ -98,14 +112,19 @@ export default function AccountsPage() {
                 <div>
                     <p className="accounts-eyebrow">Financial overview</p>
                     <h1>Accounts</h1>
-                    <p className="accounts-subtitle">Monitor balances and manage ledgers effortlessly.</p>
+                    <p className="accounts-subtitle">Monitor balances and keep active or inactive ledgers under control.</p>
                 </div>
-                <button className="accounts-primary-btn" onClick={() => setShowAccountForm(true)}>
-                    Add Account
-                </button>
+                <div className="flex gap-2">
+                    <button className="kb-btn kb-btn--ghost" onClick={() => setShowInactive((value) => !value)}>
+                        {showInactive ? "Hide Inactive" : "Show Inactive"}
+                    </button>
+                    <button className="accounts-primary-btn" onClick={() => setShowAccountForm(true)}>
+                        Add Account
+                    </button>
+                </div>
             </header>
 
-            <div className="accounts-grid">
+            <div className="accounts-flex">
                 <div className="accounts-column">
                     <section className="accounts-card">
                         {loading && !accounts.length ? (

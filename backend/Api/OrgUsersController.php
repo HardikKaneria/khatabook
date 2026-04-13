@@ -2,6 +2,7 @@
 namespace KBS\Api;
 
 use KBS\Auth\OtpAuth;
+use KBS\Helpers\OrgHelper;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -114,6 +115,24 @@ class OrgUsersController
         return false;
     }
 
+    private static function actor_can_create_organizations(): bool {
+        $uid = get_current_user_id();
+        if (!$uid) {
+            return false;
+        }
+
+        if (user_can($uid, 'manage_options')) {
+            return true;
+        }
+
+        $org_id = OrgHelper::current_org_id();
+        if (is_wp_error($org_id) || !$org_id) {
+            return false;
+        }
+
+        return self::actor_role_for_org((int) $org_id) === 'company_admin';
+    }
+
     /** Must be admin in WP (manage_options) OR company_admin/c_manager of that org */
     public static function can_manage_org(WP_REST_Request $request): bool|WP_Error {
         $ok = self::require_login($request);
@@ -130,6 +149,19 @@ class OrgUsersController
         }
 
         return new WP_Error('forbidden', 'Insufficient permissions for this organization.', ['status' => 403]);
+    }
+
+    public static function can_create_organization(WP_REST_Request $request): bool|WP_Error {
+        $ok = self::require_login($request);
+        if ($ok instanceof WP_Error) {
+            return $ok;
+        }
+
+        if (self::actor_can_create_organizations()) {
+            return true;
+        }
+
+        return new WP_Error('forbidden', 'Only company admins can create additional organizations.', ['status' => 403]);
     }
 
     /** ---------- Data helpers ---------- */
@@ -644,6 +676,108 @@ class OrgUsersController
         });
 
         return new WP_REST_Response(['users' => $all], 200);
+    }
+
+    /** POST /kbs/v1/organizations { org_name, industry? } */
+    public static function create_organization(WP_REST_Request $request): WP_REST_Response|WP_Error {
+        $perm = self::can_create_organization($request);
+        if ($perm instanceof WP_Error) {
+            return $perm;
+        }
+
+        $user_id = get_current_user_id();
+        $org_name = preg_replace('/\s+/', ' ', trim((string) $request->get_param('org_name')));
+        $org_name = sanitize_text_field((string) $org_name);
+        $industry = sanitize_text_field((string) $request->get_param('industry'));
+        $nameLength = function_exists('mb_strlen') ? mb_strlen($org_name) : strlen($org_name);
+
+        if ($org_name === '') {
+            return new WP_Error('bad_request', 'Organization name is required.', ['status' => 400]);
+        }
+
+        if ($nameLength < 3 || $nameLength > 150) {
+            return new WP_Error('bad_request', 'Organization name must be between 3 and 150 characters.', ['status' => 400]);
+        }
+
+        global $wpdb;
+        $orgsTable = $wpdb->prefix . 'kbs_organizations';
+        $rolesTable = $wpdb->prefix . 'kbs_user_org_roles';
+
+        $existingOrgId = (int) $wpdb->get_var($wpdb->prepare(
+            "SELECT org_id FROM {$orgsTable} WHERE org_name = %s LIMIT 1",
+            $org_name
+        ));
+        if ($existingOrgId > 0) {
+            return new WP_Error('organization_exists', 'An organization with that name already exists.', ['status' => 409]);
+        }
+
+        $hasExistingMemberships = self::first_org_id_for_user($user_id) > 0;
+
+        $insertData = ['org_name' => $org_name];
+        $insertFormat = ['%s'];
+        if ($industry !== '') {
+            $insertData['industry'] = $industry;
+            $insertFormat[] = '%s';
+        }
+
+        $wpdb->query('START TRANSACTION');
+        try {
+            $inserted = $wpdb->insert($orgsTable, $insertData, $insertFormat);
+            if ($inserted === false) {
+                $duplicateOrgId = (int) $wpdb->get_var($wpdb->prepare(
+                    "SELECT org_id FROM {$orgsTable} WHERE org_name = %s LIMIT 1",
+                    $org_name
+                ));
+                if ($duplicateOrgId > 0) {
+                    throw new \RuntimeException('An organization with that name already exists.');
+                }
+                throw new \RuntimeException('Failed to create the organization.');
+            }
+
+            $org_id = (int) $wpdb->insert_id;
+            $membership = self::ensure_membership($org_id, $user_id, 'company_admin');
+            if (is_wp_error($membership)) {
+                throw new \RuntimeException($membership->get_error_message());
+            }
+
+            if (!$hasExistingMemberships) {
+                $updatedPrimary = $wpdb->update(
+                    $rolesTable,
+                    ['is_primary' => 1],
+                    ['org_id' => $org_id, 'user_id' => $user_id],
+                    ['%d'],
+                    ['%d', '%d']
+                );
+                if ($updatedPrimary === false) {
+                    throw new \RuntimeException('Failed to mark the new organization as primary.');
+                }
+            }
+
+            $wpdb->query('COMMIT');
+        } catch (\Throwable $throwable) {
+            $wpdb->query('ROLLBACK');
+            $message = $throwable->getMessage();
+            $status = $message === 'An organization with that name already exists.' ? 409 : 500;
+            $code = $status === 409 ? 'organization_exists' : 'organization_create_failed';
+            return new WP_Error($code, $message, ['status' => $status]);
+        }
+
+        $payload = OtpAuth::hydrate_existing_auth_payload($user_id, $org_id);
+        if (is_wp_error($payload)) {
+            $payload = OtpAuth::create_auth_payload($user_id, $org_id);
+            if (is_wp_error($payload)) {
+                return $payload;
+            }
+        }
+
+        return new WP_REST_Response([
+            'organization' => [
+                'org_id' => $org_id,
+                'org_name' => $org_name,
+                'role' => 'company_admin',
+            ],
+            'auth' => $payload,
+        ], 201);
     }
 
     /** POST /kbs/v1/invite-user { org_id, email, role } */

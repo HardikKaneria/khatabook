@@ -58,6 +58,7 @@ class VyRestInvoiceSettings
         return new WP_REST_Response([
             'settings'  => self::format_settings($settings),
             'templates' => array_values(vy_get_invoice_templates_registry()),
+            'font_options' => vy_get_invoice_font_family_options(),
         ], 200);
     }
 
@@ -79,9 +80,12 @@ class VyRestInvoiceSettings
         $updates = [
             'default_template_id' => $templateId,
             'logo_url'            => self::sanitize_nullable_url($body, 'logo_url', $current['logo_url']),
-            'primary_color'       => self::sanitize_nullable_text($body, 'primary_color', $current['primary_color']),
-            'accent_color'        => self::sanitize_nullable_text($body, 'accent_color', $current['accent_color']),
-            'font_family'         => self::sanitize_nullable_text($body, 'font_family', $current['font_family']),
+            'primary_color'       => self::sanitize_nullable_color($body, 'primary_color', $current['primary_color']),
+            'accent_color'        => self::sanitize_nullable_color($body, 'accent_color', $current['accent_color']),
+            'font_family'         => vy_normalize_invoice_font_family(
+                (string) ($body['font_family'] ?? ''),
+                (string) ($current['font_family'] ?? '')
+            ),
             'footer_text'         => self::sanitize_nullable_block($body, 'footer_text', $current['footer_text']),
             'terms_and_conditions'=> self::sanitize_nullable_block($body, 'terms_and_conditions', $current['terms_and_conditions']),
             'bank_details'        => self::sanitize_nullable_block($body, 'bank_details', $current['bank_details']),
@@ -112,6 +116,7 @@ class VyRestInvoiceSettings
         return new WP_REST_Response([
             'settings'  => self::format_settings($settings),
             'templates' => array_values($registry),
+            'font_options' => vy_get_invoice_font_family_options(),
         ], 200);
     }
 
@@ -172,6 +177,7 @@ class VyRestInvoiceSettings
             'logo_url'  => $settings['logo_url'],
             'settings'  => self::format_settings($settings),
             'templates' => array_values(vy_get_invoice_templates_registry()),
+            'font_options' => vy_get_invoice_font_family_options(),
         ], 200);
     }
 
@@ -208,6 +214,7 @@ class VyRestInvoiceSettings
             'logo_url'  => null,
             'settings'  => self::format_settings($settings),
             'templates' => array_values(vy_get_invoice_templates_registry()),
+            'font_options' => vy_get_invoice_font_family_options(),
         ], 200);
     }
 
@@ -254,7 +261,7 @@ class VyRestInvoiceSettings
             'logo_url'             => $row['logo_url'],
             'primary_color'        => $row['primary_color'],
             'accent_color'         => $row['accent_color'],
-            'font_family'          => $row['font_family'],
+            'font_family'          => vy_normalize_invoice_font_family((string) ($row['font_family'] ?? '')),
             'footer_text'          => $row['footer_text'],
             'terms_and_conditions' => $row['terms_and_conditions'],
             'bank_details'         => $row['bank_details'],
@@ -322,6 +329,20 @@ class VyRestInvoiceSettings
         }
         $value = trim((string) $body[$key]);
         return $value === '' ? null : sanitize_text_field($value);
+    }
+
+    private static function sanitize_nullable_color(array $body, string $key, ?string $fallback): ?string
+    {
+        if (!array_key_exists($key, $body)) {
+            return $fallback;
+        }
+
+        $value = trim((string) $body[$key]);
+        if ($value === '') {
+            return null;
+        }
+
+        return \vy_normalize_invoice_hex_color($value, $fallback);
     }
 
     private static function sanitize_nullable_block(array $body, string $key, ?string $fallback): ?string

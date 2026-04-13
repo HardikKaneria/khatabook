@@ -44,6 +44,7 @@ if (!class_exists('WP_REST_Response')) {
     {
         protected $data;
         protected int $status;
+        protected array $headers = [];
 
         public function __construct($data = null, int $status = 200)
         {
@@ -59,6 +60,18 @@ if (!class_exists('WP_REST_Response')) {
         public function get_status(): int
         {
             return $this->status;
+        }
+
+        public function set_headers(array $headers): void
+        {
+            foreach ($headers as $key => $value) {
+                $this->headers[(string) $key] = (string) $value;
+            }
+        }
+
+        public function get_headers(): array
+        {
+            return $this->headers;
         }
     }
 }
@@ -222,6 +235,9 @@ final class KbsTestWpdb
             }
             if (isset($row['umeta_id'])) {
                 $max = max($max, (int) $row['umeta_id']);
+            }
+            if (isset($row['org_id'])) {
+                $max = max($max, (int) $row['org_id']);
             }
         }
         $this->auto_ids[$table] = $max;
@@ -619,6 +635,23 @@ final class KbsTestWpdb
             return $this->format_rows($rows, $output);
         }
 
+        if (preg_match("/SELECT\\s+id,\\s*journal_id,\\s*payout_account_id,\\s*income_account_id,\\s*amount,\\s*date,\\s*reason,\\s*created_at\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)\\s+AND\\s+invoice_id\\s*=\\s*(\\d+)\\s+ORDER\\s+BY\\s+date\\s+DESC,\\s+id\\s+DESC/i", preg_replace('/\s+/', ' ', $query), $matches)) {
+            $table = $matches[1];
+            $orgId = (int) $matches[2];
+            $invoiceId = (int) $matches[3];
+            $rows = array_values(array_filter($this->table($table), static function (array $row) use ($orgId, $invoiceId): bool {
+                return (int) ($row['org_id'] ?? 0) === $orgId && (int) ($row['invoice_id'] ?? 0) === $invoiceId;
+            }));
+            usort($rows, static function (array $left, array $right): int {
+                if (($left['date'] ?? '') !== ($right['date'] ?? '')) {
+                    return strcmp((string) ($right['date'] ?? ''), (string) ($left['date'] ?? ''));
+                }
+
+                return ((int) ($right['id'] ?? 0)) <=> ((int) ($left['id'] ?? 0));
+            });
+            return $this->format_rows($rows, $output);
+        }
+
         if (preg_match("/SELECT\\s+id,\\s*invoice_id,\\s*journal_id,\\s*amount,\\s*date,\\s*created_at\\s+FROM\\s+([a-zA-Z0-9_]+)\\s+WHERE\\s+org_id\\s*=\\s*(\\d+)(?:\\s+AND\\s+date\\s*>=\\s*'([^']+)')?(?:\\s+AND\\s+date\\s*<=\\s*'([^']+)')?(?:\\s+AND\\s+invoice_id\\s*=\\s*(\\d+))?\\s+ORDER\\s+BY\\s+date\\s+DESC,\\s+id\\s+DESC\\s+LIMIT\\s+(\\d+)\\s+OFFSET\\s+(\\d+)/i", preg_replace('/\s+/', ' ', $query), $matches)) {
             $table = $matches[1];
             $orgId = (int) $matches[2];
@@ -917,14 +950,19 @@ final class KbsTestWpdb
 
         if (!isset($data['id']) && !isset($data['umeta_id']) && !isset($data['org_id'])) {
             $this->auto_ids[$table] = ($this->auto_ids[$table] ?? 0) + 1;
-            $data['id'] = $this->auto_ids[$table];
-            $this->insert_id = $data['id'];
-        } elseif (!isset($data['id']) && !isset($data['umeta_id']) && preg_match('/(?:vy_|kbs_)(?:contacts|invoices|invoice_items|invoice_payments|invoice_recurring_profiles|invoice_recurring_items|invoice_notes|invoice_promises|expenses|accounts|bank_accounts|journal_entries|journal_lines|record_history|user_org_roles|settings|otp_attempts)$/', $table)) {
+            if (str_ends_with($table, 'kbs_organizations')) {
+                $data['org_id'] = $this->auto_ids[$table];
+                $this->insert_id = $data['org_id'];
+            } else {
+                $data['id'] = $this->auto_ids[$table];
+                $this->insert_id = $data['id'];
+            }
+        } elseif (!isset($data['id']) && !isset($data['umeta_id']) && preg_match('/(?:vy_|kbs_)(?:contacts|invoices|invoice_items|invoice_payments|invoice_refunds|invoice_recurring_profiles|invoice_recurring_items|invoice_notes|invoice_promises|expenses|accounts|bank_accounts|journal_entries|journal_lines|record_history|user_org_roles|settings|otp_attempts)$/', $table)) {
             $this->auto_ids[$table] = ($this->auto_ids[$table] ?? 0) + 1;
             $data['id'] = $this->auto_ids[$table];
             $this->insert_id = $data['id'];
         } else {
-            $this->insert_id = (int) ($data['id'] ?? $data['umeta_id'] ?? 0);
+            $this->insert_id = (int) ($data['id'] ?? $data['umeta_id'] ?? $data['org_id'] ?? 0);
         }
 
         $this->tables[$table][] = $data;

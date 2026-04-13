@@ -14,7 +14,7 @@ It contains:
 - PHP REST APIs under `backend/Api`
 - org/auth/onboarding logic under `backend/Auth`, `backend/Helpers`, and `backend/Api/OrgUsersController.php`
 - custom-table creation under `backend/Db/TableManager.php`
-- invoice template rendering + PDF generation under `backend/Helpers`, `backend/templates/invoices`, and `backend/Invoices/VyInvoicePdf.php`
+- invoice template rendering + PDF generation under `backend/Helpers`, direct template files in `backend/templates/invoices`, and `backend/Invoices/VyInvoicePdf.php`
 - React/Vite frontend under `plugins/khatabook/app/src`
 - plugin admin screens under `backend/Admin`
 - lightweight PHP tests under `plugins/khatabook/tests`
@@ -58,6 +58,7 @@ It contains:
     - logout
     - `/me`
     - `/active-org`
+    - `/organizations`
     - generic org settings (`SettingsController`)
     - admin log endpoints
     - org user/invite management
@@ -96,6 +97,7 @@ It contains:
 
 - `plugins/khatabook/backend/Api/OrgUsersController.php`
   - Org members + invites management
+  - Company-admin organization creation
   - Invite generation, resend, accept, role change, removal
   - Uses `kbs_user_org_roles` as the per-org role source
 
@@ -114,6 +116,7 @@ It contains:
 - `plugins/khatabook/backend/Api/VyRestAccounts.php`
   - `vy/v1/accounts`
   - `vy/v1/accounts/{id}`
+  - safe account update plus journal-aware archive/delete lifecycle
   - `vy/v1/accounts/{id}/statement`
   - `vy/v1/transactions/receipt`
   - `vy/v1/transactions/payment`
@@ -135,7 +138,9 @@ It contains:
 #### Invoices
 
 - `plugins/khatabook/backend/Api/VyRestInvoices.php`
-  - list/create/get/update/pay/email/generate PDF
+  - list/create/get/update/pay/refund/email/generate PDF
+  - duplicate-submit protection on invoice payment posting
+  - paid-invoice refund posting with invoice voiding and refund history payloads
   - recurring profile create/list/get/update/manual-generate
   - invoice-linked credit/debit notes
   - invoice-linked promise-to-pay tracking
@@ -145,10 +150,11 @@ It contains:
   - description suggestions
   - create/update work on `vy_invoices` and `vy_invoice_items`
   - payments write to `vy_invoice_payments`
+  - refunds write to `vy_invoice_refunds`
 
 - `plugins/khatabook/backend/Helpers/InvoiceFinancialHelper.php`
   - applies invoice credit/debit note totals
-  - computes adjusted invoice balances used by invoice detail, payments, reports, and statements
+  - computes adjusted invoice balances and refund totals used by invoice detail, payments, reports, and statements
 
 - `plugins/khatabook/backend/Helpers/InvoiceEditHelper.php`
   - Central invoice edit eligibility rules
@@ -216,10 +222,12 @@ It contains:
   - synthetic preview invoice generator
 
 - `plugins/khatabook/backend/Helpers/InvoiceTemplateRenderHelper.php`
-  - Shared HTML rendering model used across templates
+  - Shared invoice-template data preparation
+  - Direct template-file rendering helper used by preview and PDF paths
 
 - `plugins/khatabook/backend/templates/invoices/*.php`
-  - 10 invoice template wrapper files
+  - 4 direct invoice template PHP/HTML documents
+  - each file owns its own CSS and document markup
 
 - `plugins/khatabook/backend/Api/VyRestInvoicePreview.php`
   - Browser preview HTML response
@@ -336,6 +344,7 @@ It contains:
   - configures API client
   - enforces auth guards
   - handles org switching through `/kbs/v1/active-org`
+  - accepts same-tab `kbs-auth-updated` events after explicit auth/org updates
   - routes:
     - `/login`
     - `/accept-invite`
@@ -376,6 +385,9 @@ It contains:
   - AES-GCM when Web Crypto is available
   - fallback plain localStorage payload when crypto is unavailable
 
+- `plugins/khatabook/app/src/utils/authEvents.js`
+  - shared same-tab auth refresh event helper for active org changes
+
 - `plugins/khatabook/app/src/hooks/useAsyncResource.js`
   - shared async loading hook used by the active module hooks
 
@@ -401,10 +413,14 @@ It contains:
 
 - `plugins/khatabook/app/src/pages/CompanySettings.jsx`
   - generic org settings editor for `kbs_settings`
+  - refreshes when the active workspace changes in the same tab
 
 - `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
   - org invite and role management frontend
+  - explicit workspace list and switch actions
+  - company-admin organization creation form
   - separates active members from pending invites for operational clarity
+  - refreshes when the active workspace changes in the same tab
 
 - `plugins/khatabook/app/src/pages/Home.jsx`
   - live operational dashboard using invoices, expenses, accounts, and report APIs
@@ -421,6 +437,7 @@ It contains:
 - `plugins/khatabook/app/src/modules/accounts/MoneyInForm.jsx`
 - `plugins/khatabook/app/src/modules/accounts/MoneyOutForm.jsx`
 - `plugins/khatabook/app/src/modules/accounts/TransferForm.jsx`
+  - supports create, edit, inactive/archive, delete, and manual money movement flows
 
 #### Contacts
 
@@ -440,6 +457,7 @@ It contains:
 - `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
 - `plugins/khatabook/app/src/modules/invoices/InvoiceDetail.jsx`
 - `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceRefundForm.jsx`
 - `plugins/khatabook/app/src/modules/invoices/RecurringProfileForm.jsx`
 - `plugins/khatabook/app/src/modules/invoices/RecurringProfilesList.jsx`
 - `plugins/khatabook/app/src/modules/invoices/InvoiceNoteForm.jsx`
@@ -471,6 +489,9 @@ It contains:
 - `plugins/khatabook/app/src/modules/settings/invoices/InvoiceSettingsPage.jsx`
 - `plugins/khatabook/app/src/modules/settings/invoices/InvoiceLogoUploader.jsx`
 - `plugins/khatabook/app/src/modules/settings/invoices/InvoiceTemplatePreview.jsx`
+  - current 4-template org-scoped invoice settings surface
+  - refreshes when the active workspace changes in the same tab
+  - preview now errors clearly if the preview route returns empty HTML
 
 ## 4. Current Coding Style and Reuse Conventions
 
@@ -505,6 +526,7 @@ These are the active transaction/business tables confirmed in code:
 - `vy_invoices`
 - `vy_invoice_items`
 - `vy_invoice_payments`
+- `vy_invoice_refunds`
 - `vy_invoice_recurring_profiles`
 - `vy_invoice_recurring_items`
 - `vy_invoice_notes`
@@ -584,7 +606,16 @@ Evidence:
 1. `DashboardLayout.jsx` exposes the org switcher when `user.orgs.length > 1`
 2. `App.jsx` posts to `/wp-json/kbs/v1/active-org`
 3. `EndpointManager::set_active_org()` returns refreshed auth payload
-4. subsequent `vy/v1` and `kbs/v1` calls use the persisted active org
+4. `App.jsx` or `UsersAdmin.jsx` persists the refreshed auth payload and updates the current shell state
+5. subsequent `vy/v1` and `kbs/v1` calls use the persisted active org
+
+### 5.3A Organization creation
+
+1. `UsersAdmin.jsx` posts to `/wp-json/kbs/v1/organizations`
+2. `OrgUsersController.php` creates the organization row in `kbs_organizations`
+3. `OrgUsersController.php` adds the creator as `company_admin` in `kbs_user_org_roles`
+4. the controller returns a refreshed auth payload with the new organization selected
+5. `UsersAdmin.jsx` saves that payload and dispatches the same-tab auth refresh event
 
 ### 5.4 Invoice create/edit/pay/email/PDF
 
@@ -595,6 +626,7 @@ Evidence:
 5. PDF generation goes through `POST /vy/v1/invoices/{id}/generate-pdf` -> `VyInvoicePdf.php`
 6. customer email goes through `POST /vy/v1/invoices/{id}/email` -> `InvoiceEmailHelper.php`
 7. payment posting goes through `POST /vy/v1/invoices/{id}/pay` and writes `vy_invoice_payments` + journal entries
+8. paid-invoice refunding goes through `POST /vy/v1/invoices/{id}/refund`, writes `vy_invoice_refunds`, posts a reversing journal entry, and voids the invoice
 
 ### 5.5 Expense create
 
@@ -616,7 +648,7 @@ Evidence:
 1. `InvoiceSettingsPage.jsx` loads `/vy/v1/invoice-settings`
 2. template/logo/settings changes save back to `/vy/v1/invoice-settings`
 3. logo upload/delete go through `/vy/v1/invoice-settings/logo`
-4. `InvoiceTemplatePreview.jsx` calls `/vy/v1/invoices/preview`
+4. `InvoiceTemplatePreview.jsx` loads authenticated preview HTML and renders it through `iframe srcDoc`
 5. `VyRestInvoicePreview.php` renders HTML using shared invoice rendering helpers
 6. final PDF generation uses the same template resolution direction
 

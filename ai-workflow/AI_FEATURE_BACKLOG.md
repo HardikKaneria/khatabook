@@ -4,6 +4,11 @@ Base path: `/Users/hardikkaneria/Local Sites/khatabook/app/public/wp-content`
 
 This backlog is the execution source of truth for future Codex runs.
 
+Companion files for the broader requested product scope now live in:
+- `plugins/khatabook/ai-workflow/product_feature_list.md`
+- `plugins/khatabook/ai-workflow/PRODUCT_FEATURE_STATUS.md`
+- `plugins/khatabook/ai-workflow/PRODUCT_FEATURE_PROGRESS_LOG.md`
+
 It is based on:
 - the current inspected repository state
 - the active product modules already confirmed in code
@@ -41,13 +46,14 @@ These are active enough to treat as the current working baseline:
 - OTP login/register split with approval gate
 - Single-session auth
 - Org switching
+- Company-admin creation of additional organizations with server-side active-org refresh
 - Org users and invite management
-- Accounts and journal posting
+- Accounts and journal posting with safe edit/archive/delete lifecycle rules
 - Contacts list/create/edit/archive
 - Customer statements from live invoice and payment data
 - Operational dashboard summaries and quick actions
 - Company settings limited to confirmed live categories plus company-logo upload for real consumers
-- Invoice create/edit/pay/email/PDF
+- Invoice create/edit/pay/email/PDF with duplicate-submit protection and truthful paid-state actions
 - Recurring billing on live `vy_*` invoices
 - Invoice credit notes and debit notes
 - Invoice-linked promise-to-pay tracking
@@ -56,7 +62,7 @@ These are active enough to treat as the current working baseline:
 - Expense create/list/detail/update/archive
 - Vendor-bill due/payment visibility on the live expense model
 - Later settlement for unpaid expenses and vendor bills on the live expense model
-- Invoice templates, preview, and logo upload
+- Invoice templates, authenticated settings preview, direct per-template PHP documents, curated font selection, and logo upload
 - Profit, GST, tax, receivables aging, payables aging, status mix, and monthly trend reporting
 - Billing health score with explainable component scoring on live report data
 - Owner daily brief on live invoice, payment, expense, payable, and promise data
@@ -298,7 +304,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P0-08 — Restore safe account lifecycle actions
 - Priority: P0
-- Status: IMPROVE
+- Status: DONE
 - Area: Accounts
 - Problem:
   Accounts currently cannot be edited, deleted, or marked inactive for future transactions.
@@ -317,12 +323,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - users can edit supported account fields
   - users can mark accounts inactive for future transactions
   - deletion behavior is safe, rule-based, and clearly explained
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Api/VyRestAccounts.php` now supports safe account updates plus active/inactive lifecycle enforcement, the SPA accounts surfaces in `plugins/khatabook/app/src/modules/accounts/*` expose edit/archive/delete behavior with journal-history guardrails, and archived accounts are blocked from new manual money-flow postings.
 
 ---
 
 ## P0-09 — Prevent duplicate invoice payment recording
 - Priority: P0
-- Status: IMPROVE
+- Status: DONE
 - Area: Invoices / Payments
 - Problem:
   Repeated submit clicks during the payment modal can record the same payment multiple times.
@@ -340,12 +348,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - repeated clicks cannot create duplicate payment rows
   - payment modal shows a proper loading/submitting state
   - backend safely rejects duplicate submissions
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/backend/Api/VyRestInvoices.php` now guards invoice payment submissions by request token or short-lived payload fingerprint, and the payment modal in `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx` and `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx` now locks while saving.
 
 ---
 
 ## P0-10 — Hide payment actions when invoice is fully paid
 - Priority: P0
-- Status: IMPROVE
+- Status: DONE
 - Area: Invoices / Payments UX
 - Problem:
   After refresh, the record-payment button can still appear even when the invoice is already fully paid.
@@ -360,12 +370,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - fully paid invoices do not show record-payment action
   - payment action visibility always matches actual invoice balance state
+- Notes:
+  Completed on 2026-04-10. `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx` now suppresses the Record Payment action once `balance_due` reaches zero and replaces it with paid-state messaging instead of a stale live action.
 
 ---
 
 ## P0-11 — Add paid invoice cancel and refund workflow
 - Priority: P0
-- Status: TODO
+- Status: DONE
 - Area: Invoices / Refunds
 - Problem:
   There is no clear workflow for cancelling a paid invoice and recording the customer refund.
@@ -384,12 +396,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - paid invoices can be handled safely when a refund is required
   - refund activity is visible and traceable
   - invoice state reflects the refund/cancel action clearly
+- Notes:
+  Completed on 2026-04-10. Fully paid invoices can now be cancelled and refunded through `POST /vy/v1/invoices/{id}/refund`, which records a dedicated `vy_invoice_refunds` row, posts a reversing journal entry, voids the invoice, clears stale PDF output, and surfaces refund history in invoice detail.
 
 ---
 
 ## P0-12 — Fix Expenses page runtime crash
 - Priority: P0
-- Status: TODO
+- Status: DONE
 - Area: Expenses / Frontend Reliability
 - Problem:
   The Expenses page is crashing because `formatCurrency` is not defined inside `ExpensesPage.jsx`.
@@ -407,7 +421,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - currency values render correctly
   - no `formatCurrency is not defined` error remains
 - Notes:
-  Reconfirmed on 2026-04-10. `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx` still calls `formatCurrency(...)` in the summary cards without defining or importing that helper, so this remains the highest-severity unresolved SPA defect.
+  Completed on 2026-04-10. `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx` now defines the missing summary-card currency formatter locally, so the live Expenses route no longer crashes on render.
 
 ---
 
@@ -596,7 +610,7 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 
 ## P1-07 — Improve invoice list table clarity
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Invoices / List UX
 - Problem:
   The invoice list table feels cluttered and is not presenting invoice data cleanly.
@@ -615,12 +629,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
   - invoice list is easier to scan
   - important columns and actions are clearer
   - clutter is materially reduced
+- Notes:
+  Completed on 2026-04-10. `InvoicesPage.jsx` now shows invoice summary cards, the list supports invoice-number search through the existing filter API, and `InvoiceList.jsx` now presents schedule, collection position, refund state, and status chips in a clearer operational hierarchy.
 
 ---
 
 ## P1-08 — Fix customer suggestion dropdown behavior in invoice form
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Invoices / Form UX
 - Problem:
   After selecting a customer from the suggestion dropdown, the dropdown still remains visible while the cursor stays in the input.
@@ -635,12 +651,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - selected customer closes the suggestion list properly
   - dropdown only appears when it is actually needed
+- Notes:
+  Completed on 2026-04-10. `ContactSuggestInput.jsx` now suppresses immediate re-query after a successful selection, so the dropdown collapses cleanly and only reopens once the user resumes editing.
 
 ---
 
 ## P1-09 — Enforce customer phone input validation
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Invoices / Form Validation
 - Problem:
   Customer phone input is not restricted to numeric input and valid 10-digit length.
@@ -656,36 +674,40 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - invalid phone values are blocked or clearly flagged
   - expected 10-digit phone values are handled correctly
+- Notes:
+  Completed on 2026-04-10. `InvoiceForm.jsx` now constrains manual phone entry to digits with a 10-digit rule, and `VyRestInvoices.php` rejects invalid manually entered customer phone values server-side before invoice/contact creation.
 
 ---
 
-## P1-10 — Simplify invoice template architecture to one direct HTML/PHP template
+## P1-10 — Simplify invoice template architecture to direct per-template HTML/PHP files
 - Priority: P1
-- Status: TODO
+- Status: DONE
 - Area: Invoice Templates
 - Problem:
   The current invoice template system is too indirect, spread across multiple functions, and harder than necessary to understand or extend manually.
 - Why:
   Template rendering should be easy to inspect and easy to customize without tracing multiple layers.
 - Scope:
-  - remove multiple invoice template variants
-  - keep one default/simple invoice template
-  - refactor template flow so data is passed into a direct HTML/PHP template
+  - keep the live multi-template catalog
+  - refactor template flow so normalized data is passed into direct PHP/HTML template files
+  - move template-specific CSS into the template files themselves
   - reduce function indirection in template rendering
   - make manual template creation easier in the future
 - Constraints:
   - preserve invoice PDF generation behavior
   - avoid breaking existing invoice rendering data
 - Acceptance Criteria:
-  - one clear invoice template path exists
-  - template code can be understood from a mostly direct HTML/PHP file
+  - each active template renders from a direct PHP/HTML file
+  - template code can be understood from the template file itself
   - future manual template creation becomes straightforward
+- Notes:
+  Completed on 2026-04-12 after explicit product approval to simplify and replace the live catalog. `InvoiceTemplateRenderHelper.php` now prepares normalized invoice-template data for exactly four active templates, while each file under `backend/templates/invoices/*.php` contains its own direct HTML/CSS document used by both preview and PDF rendering.
 
 ---
 
 ## P1-11 — Fix invoice template preview
 - Priority: P1
-- Status: REVIEW
+- Status: DONE
 - Area: Invoice Templates
 - Problem:
   Template preview is not working correctly.
@@ -700,12 +722,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - template preview loads correctly
   - preview reflects the actual invoice rendering structure
+- Notes:
+  Completed on 2026-04-12 after tracing the live failure in settings. `plugins/khatabook/app/src/modules/settings/invoices/InvoiceTemplatePreview.jsx` no longer points an unauthenticated iframe at the protected REST route; it now loads preview HTML through the authenticated API client and renders it with `srcDoc`, while `plugins/khatabook/app/src/modules/settings/invoices/invoiceSettingsApi.js` decodes the REST server's JSON-string HTML response correctly and `plugins/khatabook/backend/Api/VyRestInvoicePreview.php` stays aligned with the live PDF render path.
 
 ---
 
 ## P1-12 — Remove developer-facing billing-path messaging from user UI
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: UX Copy / Product Messaging
 - Problem:
   User-facing pages currently expose internal/developer-oriented system wording such as `vy_*` billing path details.
@@ -720,12 +744,14 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - internal technical details are no longer shown to end users
   - copy is product-facing and understandable
+- Notes:
+  Completed on 2026-04-12. `plugins/khatabook/app/src/modules/invoices/InvoicesPage.jsx` no longer exposes `vy_*` billing-path wording in the recurring billing panel, and the current SPA scan did not leave other user-facing storage-path language in active product copy.
 
 ---
 
 ## P1-13 — Expand multi-organization management for company admins
 - Priority: P1
-- Status: IMPROVE
+- Status: DONE
 - Area: Organizations
 - Problem:
   Multi-organization support exists, but company admins do not yet have a proper way to create multiple organizations, and multi-org users need a clear org-switch flow.
@@ -740,6 +766,56 @@ Do not re-add these as brand new TODO features unless the task is specifically t
 - Acceptance Criteria:
   - company admins can create additional organizations
   - users with access to multiple orgs can switch between them clearly
+- Notes:
+  Completed on 2026-04-12. `plugins/khatabook/backend/Api/OrgUsersController.php` now exposes a company-admin-safe organization creation path via `POST /kbs/v1/organizations`, `plugins/khatabook/backend/Endpoint/EndpointManager.php` registers it, `plugins/khatabook/app/src/pages/UsersAdmin.jsx` now surfaces organization creation plus explicit workspace switching, and `plugins/khatabook/app/src/App.jsx` now accepts same-tab auth refresh events so the header org switcher stays in sync after org creation or switching.
+
+---
+
+## P1-14 — Keep org-scoped screens in sync after same-tab workspace changes
+- Priority: P1
+- Status: DONE
+- Area: Organizations / Workspace Shell
+- Problem:
+  Org-scoped screens were loading auth or org-specific settings once and staying stale after a header org switch or organization creation in the same tab.
+- Why:
+  Stale workspace state can mislead the user about which organization they are editing and can leave settings/member screens showing the wrong org after a switch.
+- Scope:
+  - broadcast same-tab auth updates from the live org-switch paths
+  - refresh org-bound screens that load auth or org settings locally
+  - keep admin-visible navigation aligned with real access
+- Constraints:
+  - preserve the current custom router
+  - preserve the current auth-storage model
+- Acceptance Criteria:
+  - `UsersAdmin.jsx`, `CompanySettings.jsx`, and `InvoiceSettingsPage.jsx` refresh when the active org changes in the same tab
+  - administrator users can see the same org-management/settings routes they are allowed to open
+- Notes:
+  Completed on 2026-04-12. `plugins/khatabook/app/src/App.jsx` now broadcasts auth updates during both org-switch paths, `plugins/khatabook/app/src/utils/authEvents.js` is the shared event helper, `plugins/khatabook/app/src/pages/UsersAdmin.jsx`, `plugins/khatabook/app/src/pages/CompanySettings.jsx`, and `plugins/khatabook/app/src/modules/settings/invoices/InvoiceSettingsPage.jsx` now react to same-tab auth updates, and `plugins/khatabook/app/src/layouts/DashboardLayout.jsx` now exposes admin navigation for `administrator` as well as `company_admin`.
+
+---
+
+## P1-15 — Make current invoice-template settings truthful across preview and PDF
+- Priority: P1
+- Status: DONE
+- Area: Invoice Templates
+- Problem:
+  The active 4-template catalog still exposed primary/accent color controls, but the direct template files mostly hard-coded their colors and did not stay truthful with saved settings.
+- Why:
+  Invoice settings should be deterministic. If a control exists, preview and PDF need to reflect it consistently.
+- Scope:
+  - validate safe color input server-side
+  - apply saved primary/accent colors inside all 4 direct template files
+  - keep preview overrides aligned with saved settings rules
+  - avoid blank preview if the preview endpoint returns no HTML
+- Constraints:
+  - preserve the approved 4-template catalog
+  - keep preview and PDF on the same direct template path
+- Acceptance Criteria:
+  - saved primary/accent colors visibly affect the active templates
+  - invalid color input does not leak unsafe CSS into preview/PDF
+  - preview does not silently render a blank iframe on empty HTML
+- Notes:
+  Completed on 2026-04-12. `plugins/khatabook/backend/Api/VyRestInvoiceSettings.php` now normalizes safe hex colors, `plugins/khatabook/backend/Api/VyRestInvoicePreview.php` applies the same rule to preview overrides, `plugins/khatabook/backend/Helpers/InvoiceTemplateHelper.php` and `plugins/khatabook/backend/Helpers/InvoiceTemplateRenderHelper.php` now provide normalized colors to the view model, all four files under `plugins/khatabook/backend/templates/invoices/` now consume those colors directly, and `plugins/khatabook/app/src/modules/settings/invoices/InvoiceTemplatePreview.jsx` now surfaces an error instead of a blank iframe when no HTML is returned.
 
 ---
 
@@ -1290,12 +1366,8 @@ These can be promoted later after:
 
 # Recommended Execution Order
 
-P0-P3 execution work is complete through the revenue leak detector and email-system cleanup as of 2026-04-10. The remaining default-safe queue is now:
+The previously unblocked P1 queue is complete as of 2026-04-12. The remaining execution order is now:
 
-1. P0-12 — fix the confirmed `ExpensesPage.jsx` runtime crash
-2. P0-08 — restore safe account lifecycle actions
-3. P0-09 — prevent duplicate invoice payment recording
-4. P0-10 — hide payment actions when invoices are fully paid
-5. P0-11 — add a paid-invoice cancel and refund workflow
-6. P3-06 — AI invoice assistant only after explicit AI/provider approval
-7. P3-01 and other blocked items only after explicit dependency or product decisions
+1. Fix only real bugs reproduced in live browser/PDF/manual QA for the recently completed org/workspace and invoice-template flows.
+2. Keep P3-06 blocked until explicit AI/provider approval exists.
+3. Keep P3-01 and the quotation/settings direction blockers blocked until explicit dependency or product decisions exist.

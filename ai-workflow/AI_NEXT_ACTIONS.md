@@ -21,23 +21,22 @@ It exists to answer:
 
 Unless the user explicitly overrides it, work in this order:
 
-1. Fix the confirmed `ExpensesPage.jsx` runtime crash.
-2. Restore safe account lifecycle actions without breaking journal history.
-3. Prevent duplicate invoice payment posting, then align payment-action visibility with live fully-paid state.
-4. Only after those P0 operational gaps are closed, consider paid-invoice cancel/refund work.
-5. Keep AI invoice assistant, OCR, and blocked decision work out of active execution unless the dependency/product direction is explicitly approved.
+1. Fix only live issues that can be reproduced in manual QA across organization creation/switching and the current 4-template invoice preview/PDF behavior.
+2. Keep AI invoice assistant, OCR, and quotation direction out of active execution unless explicitly approved.
+3. Keep broader invoice-template direction changes blocked unless they solve a confirmed preview/PDF/runtime problem in the current 4-template catalog.
 
 ---
 
 ## 2. Best Next Run
 
 ### Primary Task
-Fix the confirmed Expenses page runtime crash.
+Run a reproduced QA bug-fix pass only for the latest organization/workspace and 4-template invoice-document flows.
 
 ### Why this should go first
-- `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx` still renders summary cards with `formatCurrency(...)` but does not define or import that helper.
-- This is a hard runtime failure on an already-live core module, so it outranks lower-severity quality improvements and roadmap work.
-- The fix is small, repo-grounded, and should be completed before any broader financial UX work continues.
+- The prior default-safe queue is now complete, and the invoice-template stack was explicitly reset to the current 4-template reference-based catalog with authenticated settings preview loading.
+- The known same-tab org-refresh gaps and the known template-settings truthfulness gaps were closed on 2026-04-12.
+- The next safe work should be tied to real browser or PDF findings, not speculative feature churn.
+- Remaining backlog items are blocked by product or dependency direction rather than missing implementation effort.
 
 ### Required reading before coding
 Read these workflow files first:
@@ -48,100 +47,98 @@ Read these workflow files first:
 - `ai-workflow/AI_IMPLEMENTATION_PLAYBOOK.md`
 
 Then inspect these current code files:
-- `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx`
-- `plugins/khatabook/app/src/modules/expenses/ExpensesList.jsx`
-- `plugins/khatabook/app/src/modules/expenses/hooks.js`
-- `plugins/khatabook/app/src/modules/expenses/api.js`
-- `plugins/khatabook/app/src/theme.css`
-- current expense-related tests in `plugins/khatabook/tests/*`
+- `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
+- `plugins/khatabook/app/src/App.jsx`
+- `plugins/khatabook/app/src/layouts/DashboardLayout.jsx`
+- `plugins/khatabook/backend/Api/OrgUsersController.php`
+- `plugins/khatabook/app/src/modules/settings/invoices/InvoiceTemplatePreview.jsx`
+- `plugins/khatabook/backend/Api/VyRestInvoicePreview.php`
+- `plugins/khatabook/backend/templates/invoices/*`
 
 ### Exact target coverage for this run
-Fix the crash without changing expense behavior beyond the runtime repair:
+Only act on confirmed QA findings in the latest completed flows:
 
-- trace where summary-card currency formatting should come from
-- restore a local/shared currency helper safely
-- make sure the page still renders live summary totals, filters, and pagination exactly from the current expense APIs
-- add or adjust lightweight test coverage only if there is a practical place in the current harness
+- organization creation by company admins
+- same-tab auth refresh after creating or switching organizations
+- workspace switching visibility in the header and users screen
+- invoice template preview output through authenticated `srcDoc` loading and correct HTML decoding
+- invoice PDF alignment with the same direct template path
+- invoice settings controls such as curated template fonts and safe primary/accent colors staying truthful with preview/PDF output
 
 ### Constraints
-- Do not redesign the expenses screen.
-- Do not change the live expense summary API shape unless the fix requires it.
-- Do not mix this runtime repair with larger payables UX rewrites.
-- Keep the fix consistent with the shared UI/helper patterns already used in the SPA.
+- Do not invent new product scope now that the unblocked queue is closed.
+- Reproduce the bug first before patching.
+- Keep blocked AI/OCR/quotation work out of the active queue without explicit approval.
 
 ### Done when
-- the Expenses page loads without throwing `formatCurrency is not defined`
-- summary totals render correctly
-- no new drift is introduced in the expense list/detail flow
+- any follow-up change is tied to a reproduced issue
+- blocked roadmap items remain blocked
 - workflow files are updated after completion
 - `AI_CHANGELOG.md`, `AI_FEATURE_BACKLOG.md`, and `AI_NEXT_ACTIONS.md` are updated
+
+If no new reproduced QA issue exists, stop after documenting that the active safe queue remains closed.
 
 ---
 
 ## 3. Best Task After That
 
 ### Next Task
-Restore safe account lifecycle actions.
+Keep blocked roadmap work blocked until explicit approval exists.
 
-### Why this is the best follow-up after the Expenses crash fix
-- `VyRestAccounts.php` already supports create, read, and journal-aware delete/archive behavior, but the live accounts surface still lacks safe edit/inactive management.
-- This is operationally important and still stays inside the current accounts/journal architecture.
-- It is safer and more valuable than jumping to AI or OCR roadmap work.
+### Why this is the best follow-up after the QA pass
+- The remaining backlog items are blocked by missing dependencies or product direction.
+- Future runs should not convert blocked ideas into active code work without explicit approval.
 
 ### Start here
-- `plugins/khatabook/backend/Api/VyRestAccounts.php`
-- `plugins/khatabook/backend/Accounting/VyJournalEngine.php`
-- `plugins/khatabook/app/src/modules/accounts/api.js`
-- `plugins/khatabook/app/src/modules/accounts/*`
+- `plugins/khatabook/ai-workflow/AI_FEATURE_BACKLOG.md`
+- `plugins/khatabook/ai-workflow/AI_TECH_DEBT.md`
+- `plugins/khatabook/ai-workflow/AI_CHANGELOG.md`
 
 ### Minimum acceptable scope
-- enable only safe supported account edits
-- allow inactive/archive behavior for future transactions without corrupting history
-- keep delete rules tied to actual journal usage
-- do not invent a second account model or non-journal shortcut path
+- document the blocker from code if the user asks to move a blocked item forward
+- do not start AI/OCR/quotation work by default
+- keep the queue aligned with the inspected repository state
 
 ### Done when
-- operators can safely maintain account records without breaking historical journal truth
+- blocked work stays blocked until explicitly approved
 
 ---
 
 ## 4. Third Task After That
 
 ### Next Task
-Prevent duplicate invoice payment recording, then align paid-state CTA visibility.
+Use the documented fallback tasks only if a reproduced QA issue is not available.
 
 ### Why this comes here
-- `InvoicePaymentForm.jsx` still submits without a loading/locking state.
-- `VyRestInvoices::pay_invoice()` currently rejects overpayments and already-paid invoices, but it does not add idempotency-style duplicate-submit protection.
-- `InvoiceDetailPage.jsx` still shows the Record Payment CTA whenever the invoice exists, even if `balance_due` is already zero.
+- There is no remaining safe feature queue item that is both unblocked and unimplemented.
+- Fallback work should stay inside active product surfaces and avoid roadmap churn.
 
 ### Start here
-- `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx`
-- `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
-- `plugins/khatabook/backend/Api/VyRestInvoices.php`
-- `plugins/khatabook/tests/InvoiceControllerTest.php`
+- `plugins/khatabook/ai-workflow/AI_TECH_DEBT.md`
+- `plugins/khatabook/ai-workflow/AI_FEATURE_BACKLOG.md`
+- whichever active module has the reproduced issue
 
 ### Minimum acceptable scope
-- add submit locking and user-visible saving state in the payment modal
-- add backend protection against duplicate submissions
-- ensure fully paid invoices do not expose a live Record Payment action after refresh
-- keep current payment posting, org checks, and journal behavior intact
+- stay repo-grounded
+- avoid blocked roadmap work
+- keep any fallback improvement small and production-safe
+- prefer fixes inside the current org/workspace shell or the current 4-template invoice stack
 
 ### Done when
-- repeated payment submits cannot create duplicate rows
-- paid invoices do not show misleading payment actions
+- the run still produces a useful, code-backed improvement without drifting into blocked scope
 
 ---
 
 ## 5. Fourth Task After That
 
 ### Next Task
-Keep AI invoice assistant, OCR, quotations, and other blocked roadmap work blocked until explicitly approved.
+Keep AI invoice assistant, OCR, quotations, and single-template reversal work blocked until explicitly approved.
 
 ### Why this comes here
 - the repo still has no AI provider/client/config path for an invoice assistant
 - OCR bill extraction still lacks an attachment model and parser dependency
 - quotation direction is still a product decision, not active execution work
+- collapsing or re-expanding the current approved 4-template invoice system would reverse explicit product direction and should not be treated as default maintenance work
 
 ### Start here
 - `plugins/khatabook/ai-workflow/AI_FEATURE_BACKLOG.md`
@@ -172,6 +169,9 @@ OCR bill extraction is currently blocked. The repo still has no expense-file att
 
 ### AI dependency direction
 AI invoice assistance is currently blocked. The repo still has no approved AI provider/client/config path in the active plugin architecture. Do not introduce OpenAI or any other external AI dependency by default unless the run explicitly approves that product and operational direction.
+
+### Invoice template direction
+Do not reopen invoice-template architecture churn by default. The current baseline is a 4-template catalog with direct per-template PHP/HTML documents, shared server-side data preparation, aligned preview/PDF rendering, and authenticated settings-preview loading.
 
 ### Legacy business tables
 Do not add new product work on:
@@ -215,6 +215,10 @@ Always update after meaningful work:
 - `AI_FEATURE_BACKLOG.md`
 - `AI_NEXT_ACTIONS.md`
 
+When work changes coverage against `product_feature_list.md`, also update:
+- `PRODUCT_FEATURE_STATUS.md`
+- `PRODUCT_FEATURE_PROGRESS_LOG.md`
+
 Update these too if architecture or standards changed:
 - `AI_MASTER_BRIEF.md`
 - `AI_FILE_MAP.md`
@@ -229,12 +233,14 @@ Update these too if architecture or standards changed:
 
 If the main task is blocked by environment, product ambiguity, or missing path clarity, use one of these instead:
 
-- restore another confirmed runtime/UI integrity issue on an already-live module
-- tighten invoice payment validation or paid-state CTA truthfulness
-- improve workflow documentation around blocked AI/OCR decisions
+- improve invoice list scanability without changing route/data behavior
+- tighten invoice form suggestion or validation behavior
+- improve workflow documentation around blocked AI/OCR/template-direction decisions
 - clarify legacy-vs-active schema notes where the code is easy to misread
 - improve empty/loading/error states on already-active screens
 - tighten validation or logging around an already-active live flow
+- tighten same-tab org-refresh behavior on an already-active org-bound screen if a reproduced stale-workspace bug remains
+- tighten preview/PDF setting truthfulness in the active 4-template catalog if a reproduced mismatch remains
 
 Fallback tasks must still be:
 - repo-grounded

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
-import { Input, Switch } from "antd";
+import { Input, Select, Switch } from "antd";
 import { useToast } from "../../../components/ToastProvider";
 import { getInvoiceSettings, saveInvoiceSettings } from "./invoiceSettingsApi";
+import { subscribeAuthUpdated } from "../../../utils/authEvents.js";
 import InvoiceLogoUploader from "./InvoiceLogoUploader.jsx";
 import InvoiceTemplatePreview from "./InvoiceTemplatePreview.jsx";
 
@@ -12,9 +13,17 @@ export default function InvoiceSettingsPage() {
     const toast = useToast();
     const [settings, setSettings] = useState(null);
     const [templates, setTemplates] = useState([]);
+    const [fontOptions, setFontOptions] = useState([]);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [logoBusy, setLogoBusy] = useState(false);
+    const [authRevision, setAuthRevision] = useState(0);
+
+    useEffect(() => {
+        return subscribeAuthUpdated(() => {
+            setAuthRevision((value) => value + 1);
+        });
+    }, []);
 
     useEffect(() => {
         let alive = true;
@@ -25,9 +34,9 @@ export default function InvoiceSettingsPage() {
                 if (!alive) return;
                 setSettings(response?.settings || {});
                 setTemplates(response?.templates || []);
+                setFontOptions(response?.font_options || []);
             } catch (error) {
                 if (!alive) return;
-                console.error("Invoice settings load failed", error);
                 toast.error(error?.message || "Failed to load invoice settings");
             } finally {
                 if (alive) setLoading(false);
@@ -36,11 +45,16 @@ export default function InvoiceSettingsPage() {
         return () => {
             alive = false;
         };
-    }, [toast]);
+    }, [authRevision, toast]);
 
     const selectedTemplate = useMemo(
         () => templates.find((tpl) => tpl.id === settings?.default_template_id) || null,
         [templates, settings?.default_template_id]
+    );
+
+    const selectedFontOption = useMemo(
+        () => fontOptions.find((option) => option.value === settings?.font_family) || null,
+        [fontOptions, settings?.font_family]
     );
 
     const updateField = (key, value) => {
@@ -63,6 +77,9 @@ export default function InvoiceSettingsPage() {
         if (Array.isArray(response?.templates)) {
             setTemplates(response.templates);
         }
+        if (Array.isArray(response?.font_options)) {
+            setFontOptions(response.font_options);
+        }
     };
 
     const handleSave = async () => {
@@ -73,7 +90,6 @@ export default function InvoiceSettingsPage() {
             applySettingsResponse(response, settings);
             toast.success("Invoice settings updated");
         } catch (error) {
-            console.error("Invoice settings save failed", error);
             toast.error(error?.message || "Failed to save settings");
         } finally {
             setSaving(false);
@@ -157,28 +173,41 @@ export default function InvoiceSettingsPage() {
                             <label htmlFor="primary-color">Primary Color</label>
                             <Input
                                 id="primary-color"
-                                placeholder="#6c5ce7"
+                                placeholder="#4f46e5"
+                                maxLength={7}
                                 value={settings.primary_color || ""}
                                 onChange={handleInputChange("primary_color")}
                             />
+                            <p className="field-hint">Used for the main template accent such as bars, totals, and key highlights. Leave blank to keep the template default.</p>
                         </div>
                         <div className="field">
                             <label htmlFor="accent-color">Accent Color</label>
                             <Input
                                 id="accent-color"
-                                placeholder="#e84393"
+                                placeholder="#1e3a8a"
+                                maxLength={7}
                                 value={settings.accent_color || ""}
                                 onChange={handleInputChange("accent_color")}
                             />
+                            <p className="field-hint">Used for secondary bands, dividers, and supporting accents where the active template provides them.</p>
                         </div>
                         <div className="field">
                             <label htmlFor="font-family">Font Family</label>
-                            <Input
+                            <Select
                                 id="font-family"
-                                placeholder="Inter, Helvetica, sans-serif"
-                                value={settings.font_family || ""}
-                                onChange={handleInputChange("font_family")}
+                                value={settings.font_family || undefined}
+                                onChange={(value) => updateField("font_family", value)}
+                                options={fontOptions.map((option) => ({
+                                    value: option.value,
+                                    label: option.label,
+                                }))}
+                                placeholder="Select invoice font"
                             />
+                            {selectedFontOption?.description ? (
+                                <p className="field-hint">{selectedFontOption.description}</p>
+                            ) : (
+                                <p className="field-hint">Only curated PDF-safe font stacks are available here.</p>
+                            )}
                         </div>
                         </div>
                     </section>

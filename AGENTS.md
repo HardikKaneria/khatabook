@@ -6,7 +6,7 @@ This repository is the `plugins/khatabook` headless WordPress billing and busine
 
 - Host platform: WordPress plugin with React SPA frontend and REST backend.
 - Active product areas: auth/onboarding, org membership, accounts, invoices, expenses, reports, invoice templates, settings, admin tooling.
-- Source of truth for repo governance lives in `../../ai-workflow/`.
+- Source of truth for repo governance lives in `ai-workflow/`.
 
 ## Architecture Rules
 
@@ -27,7 +27,7 @@ This repository is the `plugins/khatabook` headless WordPress billing and busine
 
 ## Mandatory Working Rules
 
-- Inspect before change. Read relevant files in `../../ai-workflow/` first, then inspect the exact current backend and frontend code paths.
+- Inspect before change. Read relevant files in `ai-workflow/` first, then inspect the exact current backend and frontend code paths.
 - Trace end to end before patching:
   - page or caller
   - API client
@@ -39,6 +39,7 @@ This repository is the `plugins/khatabook` headless WordPress billing and busine
 - Reuse existing helpers and controllers. Do not duplicate invoice, auth, org, template, or settings logic.
 - Every write path must include validation, permission checks, org safety, and explicit error behavior.
 - Prefer small complete fixes over broad rewrites.
+- When work maps to items in `ai-workflow/product_feature_list.md`, update the companion product-feature tracker files as part of close-out.
 
 ## UX Rules
 
@@ -48,7 +49,7 @@ This repository is the `plugins/khatabook` headless WordPress billing and busine
 - Lists need clear headers, primary action, filters, bounded results, loading, empty, and error states.
 - Detail pages must show state, summary, and only valid actions.
 - Forms must be direct, validated, and must not imply unsupported workflows.
-- Follow `../../ai-workflow/AI_UX_DOCTRINE.md` for UX decisions.
+- Follow `ai-workflow/AI_UX_DOCTRINE.md` for UX decisions.
 
 ## Testing Rules
 
@@ -59,10 +60,17 @@ This repository is the `plugins/khatabook` headless WordPress billing and busine
 
 ## Workflow File Maintenance
 
-After meaningful work, update the relevant files in `../../ai-workflow/`:
+After meaningful work, update the relevant files in `ai-workflow/`:
 
 - Always: `AI_CHANGELOG.md`, `AI_FEATURE_BACKLOG.md`, `AI_NEXT_ACTIONS.md`
 - When understanding changes: `AI_MASTER_BRIEF.md`, `AI_FILE_MAP.md`, `AI_TECH_DEBT.md`, `AI_SYSTEM_RULES.md`, `AI_UX_DOCTRINE.md`, `AI_IMPLEMENTATION_PLAYBOOK.md`
+- When feature coverage changes against `product_feature_list.md`: `PRODUCT_FEATURE_STATUS.md`, `PRODUCT_FEATURE_PROGRESS_LOG.md`
+
+Treat `ai-workflow/product_feature_list.md` as the requested product-scope reference.
+Do not write status markers into that source list unless explicitly asked.
+Keep live implementation status in:
+- `ai-workflow/PRODUCT_FEATURE_STATUS.md`
+- `ai-workflow/PRODUCT_FEATURE_PROGRESS_LOG.md`
 
 ## Blocker Handling
 

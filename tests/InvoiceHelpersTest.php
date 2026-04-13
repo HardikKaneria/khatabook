@@ -24,14 +24,14 @@ kbs_test('preview sample invoice generator returns realistic totals and selected
     $sample = vy_build_preview_sample_invoice(
         (object) ['org_id' => 77, 'org_name' => 'Demo Org'],
         (object) [
-            'default_template_id' => 'minimal-clean',
+            'default_template_id' => 'modern-clean-blue',
             'bank_details' => "Demo Bank\n1234567890",
             'show_qr_code' => 1,
         ],
-        'accent-panel'
+        'corporate-orange'
     );
 
-    kbs_assert_same('accent-panel', $sample['invoice']->template_id);
+    kbs_assert_same('corporate-orange', $sample['invoice']->template_id);
     kbs_assert_same(3, count($sample['items']));
     kbs_assert_true($sample['invoice']->subtotal > 0, 'Sample subtotal should be positive.');
     kbs_assert_true($sample['invoice']->tax_total > 0, 'Sample tax should be positive.');
@@ -42,11 +42,11 @@ kbs_test('preview QR generator returns an embeddable data URI when enabled', fun
     $sample = vy_build_preview_sample_invoice(
         (object) ['org_id' => 77, 'org_name' => 'Demo Org'],
         (object) [
-            'default_template_id' => 'minimal-clean',
+            'default_template_id' => 'modern-clean-blue',
             'bank_details' => "Demo Bank\n1234567890",
             'show_qr_code' => 1,
         ],
-        'minimal-clean'
+        'modern-clean-blue'
     );
 
     $dataUri = vy_invoice_qr_data_uri(

@@ -40,6 +40,9 @@ const createEmptyItem = () => ({
     tax_rate: 0,
 });
 
+const sanitizePhoneInput = (value) => (String(value || "").replace(/\D+/g, "").slice(0, 10));
+const isValidPhoneInput = (value) => value === "" || /^\d{10}$/.test(value);
+
 const buildInitialForm = (initialData, today) => ({
     invoice_number: initialData?.invoice_number || "",
     date: initialData?.date || today,
@@ -73,12 +76,16 @@ export default function InvoiceForm({ onSubmit, onCancel, initialData = null, su
     const [invoiceNumberLoading, setInvoiceNumberLoading] = useState(false);
     const [selectedContactId, setSelectedContactId] = useState(initialData?.contact_id || null);
     const [descriptionSuggestions, setDescriptionSuggestions] = useState([]);
+    const [phoneDirty, setPhoneDirty] = useState(false);
+    const [phoneError, setPhoneError] = useState("");
 
     useEffect(() => {
         setForm(buildInitialForm(initialData, today));
         setItems(buildInitialItems(initialData));
         setSelectedContactId(initialData?.contact_id || null);
         setDueDateTouched(Boolean(initialData?.id));
+        setPhoneDirty(false);
+        setPhoneError("");
     }, [initialData, today]);
 
     useEffect(() => {
@@ -170,7 +177,14 @@ export default function InvoiceForm({ onSubmit, onCancel, initialData = null, su
         if (key === "due_date") {
             setDueDateTouched(true);
         }
-        setForm((prev) => ({ ...prev, [key]: event.target.value }));
+        const nextValue = key === "customer_phone" ? sanitizePhoneInput(event.target.value) : event.target.value;
+        if (key === "customer_phone") {
+            setPhoneDirty(true);
+            if (nextValue === "" || isValidPhoneInput(nextValue)) {
+                setPhoneError("");
+            }
+        }
+        setForm((prev) => ({ ...prev, [key]: nextValue }));
     };
     const handleCustomerNameChange = (value) => {
         setSelectedContactId(null);
@@ -180,6 +194,8 @@ export default function InvoiceForm({ onSubmit, onCancel, initialData = null, su
     const handleContactSelect = (contact) => {
         if (!contact) return;
         setSelectedContactId(contact.id);
+        setPhoneDirty(false);
+        setPhoneError("");
         setForm((prev) => ({
             ...prev,
             customer_name: contact.name || prev.customer_name,
@@ -211,9 +227,18 @@ export default function InvoiceForm({ onSubmit, onCancel, initialData = null, su
 
     const handleSubmit = (event) => {
         event.preventDefault();
+        const normalizedPhone = sanitizePhoneInput(form.customer_phone);
+        const shouldValidatePhone = !selectedContactId || phoneDirty || normalizedPhone !== "";
+
+        if (shouldValidatePhone && !isValidPhoneInput(normalizedPhone)) {
+            setPhoneError("Customer phone must be a valid 10-digit number.");
+            return;
+        }
+
         const payload = {
             ...form,
             contact_id: selectedContactId,
+            customer_phone: selectedContactId && !phoneDirty ? "" : normalizedPhone,
             items: items.map((item) => ({
                 description: item.description,
                 quantity: parseFloat(item.quantity) || 0,
@@ -264,7 +289,15 @@ export default function InvoiceForm({ onSubmit, onCancel, initialData = null, su
                 </div>
                 <div>
                     <label className="kb-muted">Customer Phone</label>
-                    <input className="kb-input" value={form.customer_phone} onChange={handleChange("customer_phone")} />
+                    <input
+                        className="kb-input"
+                        value={form.customer_phone}
+                        onChange={handleChange("customer_phone")}
+                        inputMode="numeric"
+                        maxLength={10}
+                        placeholder="10-digit phone number"
+                    />
+                    {phoneError ? <span className="kb-field-error">{phoneError}</span> : <span className="kb-field-note">Optional. Use a 10-digit customer mobile number.</span>}
                 </div>
             </div>
 

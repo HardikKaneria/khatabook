@@ -80,7 +80,7 @@ class OtpAuth
 
         // Send email
         $subject = 'Your Vyavhar OTP Code';
-        $message = "Use this one-time passcode to continue your " . ucfirst($context) . ":\n\n{$otp}\n\nThis code expires in 5 minutes. If you didn’t request it, you can safely ignore this email.";
+        $message = "Use this one-time passcode to continue your " . ucfirst($context) . "This code expires in 5 minutes. If you didn’t request it, you can safely ignore this email.";
         if (function_exists('kbs_send_email')) {
             $sent = \kbs_send_email($email, $subject, $message, [
                 'variant'      => 'otp',

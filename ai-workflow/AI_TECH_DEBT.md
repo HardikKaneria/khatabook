@@ -6,23 +6,7 @@ This file lists only debt that is directly supported by the current codebase.
 
 ## 1. Product and UX Debt
 
-### 1.1 Expenses page still has a confirmed runtime helper crash
-
-Evidence:
-
-- `plugins/khatabook/app/src/modules/expenses/ExpensesPage.jsx`
-
-Observed:
-
-- The page renders summary cards with `formatCurrency(...)` at multiple call sites.
-- No local `formatCurrency` helper exists in that file and nothing is imported for it.
-- This leaves the current Expenses route vulnerable to a direct runtime failure in a core business module.
-
-Impact:
-
-- This is a user-visible hard failure on an already-live operational screen and should be treated as the highest-priority frontend reliability gap.
-
-### 1.2 Dashboard home still fans out through multiple independent API calls
+### 1.1 Dashboard home still fans out through multiple independent API calls
 
 Evidence:
 
@@ -45,7 +29,7 @@ Impact:
 
 - Dashboard reliability is better than before, but any future dashboard expansion still requires touching many endpoint calls in one page-level loader.
 
-### 1.3 Company settings storage still carries broader legacy category support than the active UI
+### 1.2 Company settings storage still carries broader legacy category support than the active UI
 
 Evidence:
 
@@ -63,7 +47,7 @@ Impact:
 
 - Future runs can still misread the generic settings backend as proof that hidden categories are live modules.
 
-### 1.4 Reports page still orchestrates many report requests with bespoke page-level state
+### 1.3 Reports page still orchestrates many report requests with bespoke page-level state
 
 Evidence:
 
@@ -82,6 +66,24 @@ Observed:
 Impact:
 
 - Reporting is operationally stronger now, but future report growth can still drift into a large page component with tightly coupled loading logic.
+
+### 1.4 Invoice refunds currently support full paid-invoice reversals only
+
+Evidence:
+
+- `plugins/khatabook/backend/Api/VyRestInvoices.php`
+- `plugins/khatabook/app/src/modules/invoices/InvoiceRefundForm.jsx`
+- `plugins/khatabook/backend/Db/TableManager.php`
+
+Observed:
+
+- The live refund flow now exists and is org-safe.
+- `refund_invoice()` only allows invoices in `PAID` state, computes a single refundable amount from the full net paid balance, and voids the invoice after one refund post.
+- `InvoiceRefundForm.jsx` exposes a read-only refund amount rather than partial or payment-specific refund controls.
+
+Impact:
+
+- The product can now safely reverse fully paid invoices, but partial refunds, staged refunds, or payment-specific reversals still require future product and accounting direction.
 
 ## 2. Architecture and Maintainability Debt
 
@@ -206,23 +208,44 @@ Impact:
 
 - OCR bill extraction should stay blocked until there is an explicit dependency and product-direction decision rather than being faked through placeholder UI.
 
-### 2.8 Account lifecycle support is still only partial across API and SPA surfaces
+### 2.8 Invoice templates now favor direct per-template files over shared HTML composition
 
 Evidence:
 
-- `plugins/khatabook/backend/Api/VyRestAccounts.php`
-- `plugins/khatabook/app/src/modules/accounts/api.js`
-- `plugins/khatabook/app/src/modules/accounts/*`
+- `plugins/khatabook/backend/Helpers/InvoiceTemplateRenderHelper.php`
+- `plugins/khatabook/backend/templates/invoices/*.php`
 
 Observed:
 
-- The backend supports account create, read, statement, and journal-aware delete/archive behavior.
-- No account update route exists in `VyRestAccounts.php`.
-- The active frontend accounts API client does not expose update or delete/archive helpers yet.
+- The invoice template architecture now uses direct PHP/HTML template files with per-template CSS, while shared helpers only prepare normalized document data and include the selected file.
+- This makes manual template editing much easier than the older shared HTML renderer.
+- The tradeoff is intentional duplication: structural invoice-document changes now require touching four template files instead of one shared HTML function.
 
 Impact:
 
-- Operators cannot safely maintain account metadata or inactivate accounts through a complete first-class lifecycle, even though the rest of the financial modules already support richer maintenance flows.
+- Manual customization is easier and safer for template-specific work, but future cross-template markup changes need disciplined multi-file updates.
+
+### 2.9 Auth refresh still depends on local storage plus custom same-tab events
+
+Evidence:
+
+- `plugins/khatabook/app/src/App.jsx`
+- `plugins/khatabook/app/src/utils/authStorage.js`
+- `plugins/khatabook/app/src/utils/authEvents.js`
+- `plugins/khatabook/app/src/pages/UsersAdmin.jsx`
+- `plugins/khatabook/app/src/pages/CompanySettings.jsx`
+- `plugins/khatabook/app/src/modules/settings/invoices/InvoiceSettingsPage.jsx`
+
+Observed:
+
+- The active app shell owns the canonical in-memory auth state.
+- Cross-tab updates still rely on the browser `storage` event, while same-tab updates now rely on a shared `kbs-auth-updated` event broadcast from the active org-switch paths.
+- The main org-bound screens now subscribe to that event so same-tab workspace changes refresh `UsersAdmin.jsx`, `CompanySettings.jsx`, and `InvoiceSettingsPage.jsx` without a full reload.
+- This is production-safe and keeps the manual router intact, but auth synchronization is still distributed across local storage, custom events, and page-level writes.
+
+Impact:
+
+- Future runs can still break auth-state consistency if they add new auth-mutating flows without dispatching the same-tab refresh event or routing those changes through the existing app shell.
 
 ## 3. Safety and Reliability Debt
 
@@ -287,24 +310,6 @@ Observed:
 Impact:
 
 - This improves convenience more than true secrecy and deserves caution in future auth/security work.
-
-### 3.5 Invoice payment posting still lacks duplicate-submit protection and truthful paid-state CTA gating
-
-Evidence:
-
-- `plugins/khatabook/app/src/modules/invoices/InvoicePaymentForm.jsx`
-- `plugins/khatabook/app/src/modules/invoices/InvoiceDetailPage.jsx`
-- `plugins/khatabook/backend/Api/VyRestInvoices.php`
-
-Observed:
-
-- `InvoicePaymentForm.jsx` submits immediately with no in-flight locking or saving state on the submit button.
-- `InvoiceDetailPage.jsx` still renders the `Record Payment` action whenever an invoice is loaded, instead of hiding it when `balance_due` is already zero.
-- `VyRestInvoices::pay_invoice()` blocks overpayments and already-paid invoices, but it does not add a duplicate-submit or idempotency guard for repeated client submissions against the same invoice and payload.
-
-Impact:
-
-- Financial integrity still relies too heavily on a single server-side outstanding-balance check, and the UI can still suggest a payment action that should no longer be available.
 
 ## 4. Legacy and Consistency Debt
 

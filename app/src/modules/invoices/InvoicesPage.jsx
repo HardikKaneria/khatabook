@@ -36,6 +36,39 @@ export default function InvoicesPage() {
         return [];
     }, [recurringData]);
 
+    const invoiceSummary = useMemo(() => {
+        const summary = {
+            openInvoices: 0,
+            overdueInvoices: 0,
+            outstandingAmount: 0,
+            collectedAmount: 0,
+            refundedInvoices: 0,
+        };
+        const today = new Date().toISOString().slice(0, 10);
+
+        invoices.forEach((invoice) => {
+            const balanceDue = Number(invoice.balance_due || 0);
+            const netPaid = Number(invoice.net_paid_amount ?? invoice.paid_amount ?? 0);
+            const refundedAmount = Number(invoice.refunded_amount || 0);
+            const status = String(invoice.status || "").toUpperCase();
+            const dueDate = String(invoice.due_date || "");
+
+            if (refundedAmount > 0) {
+                summary.refundedInvoices += 1;
+            }
+            if (["SENT", "PARTIAL"].includes(status) && balanceDue > 0) {
+                summary.openInvoices += 1;
+                summary.outstandingAmount += balanceDue;
+                if (dueDate && dueDate < today) {
+                    summary.overdueInvoices += 1;
+                }
+            }
+            summary.collectedAmount += netPaid;
+        });
+
+        return summary;
+    }, [invoices]);
+
     useEffect(() => {
         if (consumeQueryFlag("create")) {
             setShowForm(true);
@@ -119,11 +152,38 @@ export default function InvoicesPage() {
             </header>
 
             <div className="invoices-grid">
+                <section className="invoices-summary-grid">
+                    <article className="invoices-summary-card">
+                        <span className="invoices-summary-label">Open Invoices</span>
+                        <strong>{invoiceSummary.openInvoices}</strong>
+                        <p>Invoices still waiting on customer payment.</p>
+                    </article>
+                    <article className="invoices-summary-card">
+                        <span className="invoices-summary-label">Overdue</span>
+                        <strong>{invoiceSummary.overdueInvoices}</strong>
+                        <p>Open invoices whose due date has already passed.</p>
+                    </article>
+                    <article className="invoices-summary-card">
+                        <span className="invoices-summary-label">Awaiting Collection</span>
+                        <strong>₹ {invoiceSummary.outstandingAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                        <p>Visible balance still outstanding across the filtered list.</p>
+                    </article>
+                    <article className="invoices-summary-card">
+                        <span className="invoices-summary-label">Net Collected</span>
+                        <strong>₹ {invoiceSummary.collectedAmount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                        <p>
+                            {invoiceSummary.refundedInvoices
+                                ? `${invoiceSummary.refundedInvoices} refunded/voided invoice${invoiceSummary.refundedInvoices === 1 ? "" : "s"} included.`
+                                : "Refunded invoices are shown separately in the list."}
+                        </p>
+                    </article>
+                </section>
+
                 <section className="invoices-card">
                     <div className="invoices-card-header">
                         <div>
                             <h3>Filters</h3>
-                            <p>Narrow down invoices by status or customer.</p>
+                            <p>Narrow down invoices by status, customer, or invoice number.</p>
                         </div>
                     </div>
                     <div className="invoices-filter-row">
@@ -153,7 +213,7 @@ export default function InvoicesPage() {
                     <div className="invoices-card-header">
                         <div>
                             <h3>Invoice List</h3>
-                            <p>Click an invoice to open the detail view.</p>
+                            <p>Scan status, due position, collections, and refund state before opening the detail view.</p>
                         </div>
                     </div>
                     <InvoiceList
@@ -168,7 +228,7 @@ export default function InvoicesPage() {
                     <div className="invoices-card-header">
                         <div>
                             <h3>Recurring Billing</h3>
-                            <p>Plans created from live invoices generate future invoices on the active `vy_*` billing path.</p>
+                            <p>Plans created from live invoices generate future invoices for the current organization using the same billing workflow.</p>
                         </div>
                     </div>
                     <InlineNotice message={recurringError} />

@@ -3,6 +3,37 @@ import FeedbackState from "../../components/ui/FeedbackState.jsx";
 const formatCurrency = (value) =>
     Number(value ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const today = () => new Date().toISOString().slice(0, 10);
+
+const getDueState = (invoice) => {
+    const status = String(invoice?.status || "").toUpperCase();
+    const refundedAmount = Number(invoice?.refunded_amount || 0);
+    const balanceDue = Number(invoice?.balance_due || 0);
+    const dueDate = String(invoice?.due_date || "");
+
+    if (status === "VOID" && refundedAmount > 0) {
+        return { label: "Refunded", tone: "muted" };
+    }
+    if (status === "VOID") {
+        return { label: "Voided", tone: "muted" };
+    }
+    if (balanceDue <= 0) {
+        return { label: "Settled", tone: "success" };
+    }
+    if (!dueDate) {
+        return { label: "No due date", tone: "muted" };
+    }
+
+    if (dueDate < today()) {
+        return { label: "Overdue", tone: "danger" };
+    }
+    if (dueDate === today()) {
+        return { label: "Due today", tone: "warning" };
+    }
+
+    return { label: `Due ${dueDate}`, tone: "info" };
+};
+
 export default function InvoiceList({ invoices = [], loading, error, onSelectInvoice }) {
     if (loading) {
         return <FeedbackState title="Loading invoices" description="Fetching the current invoice list." tone="loading" />;
@@ -18,64 +49,86 @@ export default function InvoiceList({ invoices = [], loading, error, onSelectInv
 
     return (
         <div className="ui-table-wrap">
-            <table className="w-full text-sm">
+            <table className="kb-data-table kb-invoice-table">
                 <thead>
-                    <tr className="text-left text-gray-500">
-                        <th>Invoice #</th>
+                    <tr>
+                        <th>Invoice</th>
                         <th>Customer</th>
-                        <th>Date</th>
-                        <th>Due</th>
-                        <th>Total</th>
+                        <th>Schedule</th>
+                        <th>Collections</th>
                         <th>Status</th>
-                        <th>Paid</th>
-                        <th></th>
+                        <th className="kb-data-table__actions">Action</th>
                     </tr>
                 </thead>
                 <tbody>
-                    {invoices.map((invoice) => (
-                        <tr key={invoice.id} className="border-t">
-                            <td>{invoice.invoice_number}</td>
-                            <td>{invoice.customer_name}</td>
-                            <td>{invoice.date}</td>
-                            <td>{invoice.due_date || "—"}</td>
-                            <td>
-                                ₹ {formatCurrency(invoice.adjusted_total ?? invoice.total)}
-                                {Number(invoice.adjusted_total ?? invoice.total) !== Number(invoice.total ?? 0) ? (
-                                    <div className="kb-muted" style={{ fontSize: 12 }}>
-                                        Base ₹ {formatCurrency(invoice.total)}
+                    {invoices.map((invoice) => {
+                        const dueState = getDueState(invoice);
+
+                        return (
+                            <tr key={invoice.id}>
+                                <td>
+                                    <div className="kb-invoice-cell">
+                                        <strong className="kb-data-table__primary">{invoice.invoice_number}</strong>
+                                        <span className="kb-invoice-cell__meta">Issued {invoice.date || "—"}</span>
                                     </div>
-                                ) : null}
-                            </td>
-                            <td>
-                                <span
-                                    style={{
-                                        padding: "2px 8px",
-                                        borderRadius: 999,
-                                        background: "var(--kb-color-gray-100)",
-                                        fontSize: 12,
-                                        fontWeight: 600,
-                                    }}
-                                >
-                                    {invoice.status}
-                                </span>
-                            </td>
-                            <td>₹ {formatCurrency(invoice.paid_amount)}</td>
-                            <td>
-                                <button
-                                    style={{
-                                        background: "none",
-                                        border: "none",
-                                        color: "var(--kb-color-primary)",
-                                        cursor: "pointer",
-                                        fontWeight: 600,
-                                    }}
-                                    onClick={() => onSelectInvoice?.(invoice.id)}
-                                >
-                                    View
-                                </button>
-                            </td>
-                        </tr>
-                    ))}
+                                </td>
+                                <td>
+                                    <div className="kb-invoice-cell">
+                                        <strong className="kb-data-table__primary">{invoice.customer_name || "Walk-in customer"}</strong>
+                                        {invoice.contact?.email || invoice.contact?.phone ? (
+                                            <span className="kb-invoice-cell__meta">
+                                                {[invoice.contact?.email, invoice.contact?.phone].filter(Boolean).join(" · ")}
+                                            </span>
+                                        ) : null}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div className="kb-invoice-cell">
+                                        <span className="kb-data-table__primary">{invoice.due_date || "No due date"}</span>
+                                        <span className={`kb-invoice-chip kb-invoice-chip--${dueState.tone}`}>
+                                            {dueState.label}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td>
+                                    <div className="kb-invoice-cell">
+                                        <strong className="kb-data-table__primary">₹ {formatCurrency(invoice.adjusted_total ?? invoice.total)}</strong>
+                                        <span className="kb-invoice-cell__meta">
+                                            Due ₹ {formatCurrency(invoice.balance_due || 0)} · Net paid ₹ {formatCurrency(invoice.net_paid_amount ?? invoice.paid_amount)}
+                                        </span>
+                                        {Number(invoice.refunded_amount || 0) > 0 ? (
+                                            <span className="kb-invoice-cell__meta">Refunded ₹ {formatCurrency(invoice.refunded_amount)}</span>
+                                        ) : null}
+                                        {Number(invoice.adjusted_total ?? invoice.total) !== Number(invoice.total ?? 0) ? (
+                                            <span className="kb-invoice-cell__meta">Base total ₹ {formatCurrency(invoice.total)}</span>
+                                        ) : null}
+                                    </div>
+                                </td>
+                                <td>
+                                    <div className="kb-invoice-status-stack">
+                                        <span className={`kb-invoice-chip kb-invoice-chip--${String(invoice.status || "").toLowerCase()}`}>
+                                            {invoice.status}
+                                        </span>
+                                        {Number(invoice.refunded_amount || 0) > 0 ? (
+                                            <span className="kb-invoice-chip kb-invoice-chip--muted">Refund tracked</span>
+                                        ) : Number(invoice.balance_due || 0) > 0 ? (
+                                            <span className="kb-invoice-chip kb-invoice-chip--info">Collection open</span>
+                                        ) : (
+                                            <span className="kb-invoice-chip kb-invoice-chip--success">No balance due</span>
+                                        )}
+                                    </div>
+                                </td>
+                                <td className="kb-data-table__actions">
+                                    <button
+                                        className="kb-btn kb-btn--ghost kb-btn--small"
+                                        onClick={() => onSelectInvoice?.(invoice.id)}
+                                    >
+                                        View
+                                    </button>
+                                </td>
+                            </tr>
+                        );
+                    })}
                 </tbody>
             </table>
         </div>

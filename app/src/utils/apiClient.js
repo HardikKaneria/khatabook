@@ -4,7 +4,7 @@ const DEBUG_API =
     window.__KBS_DEBUG_API === true;
 
 export function makeDefaultApiFetch(rest, token) {
-    return async (path, { method = "GET", body, headers } = {}) => {
+    return async (path, { method = "GET", body, headers, responseType = "auto" } = {}) => {
         const base = rest?.root || "/wp-json/";
         const url = path.startsWith("http")
             ? new URL(path)
@@ -77,6 +77,15 @@ export function makeDefaultApiFetch(rest, token) {
                 error.status = res.status;
                 throw error;
             }
+
+            if (responseType === "text") {
+                return text;
+            }
+
+            if (responseType === "json") {
+                return text ? JSON.parse(text) : {};
+            }
+
             return ct.includes("application/json") && text ? JSON.parse(text) : {};
         };
 

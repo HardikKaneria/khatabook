@@ -5,6 +5,7 @@ import {
     createRecurringProfile,
     generateRecurringProfile,
     payInvoice,
+    refundInvoice,
     updateInvoice,
     updateInvoicePromise,
     updateRecurringProfile,
@@ -15,6 +16,7 @@ import InvoicePaymentForm from "./InvoicePaymentForm.jsx";
 import InvoiceForm from "./InvoiceForm.jsx";
 import InvoiceNoteForm from "./InvoiceNoteForm.jsx";
 import InvoicePromiseForm from "./InvoicePromiseForm.jsx";
+import InvoiceRefundForm from "./InvoiceRefundForm.jsx";
 import RecurringProfileForm from "./RecurringProfileForm.jsx";
 import { useAccounts } from "../accounts/hooks";
 import apiClient from "../../lib/apiClient";
@@ -32,14 +34,18 @@ export default function InvoiceDetailPage({ invoiceId }) {
     const [showEmailModal, setShowEmailModal] = useState(false);
     const [showRecurringForm, setShowRecurringForm] = useState(false);
     const [showPromiseForm, setShowPromiseForm] = useState(false);
+    const [showRefundForm, setShowRefundForm] = useState(false);
     const [emailRecipients, setEmailRecipients] = useState("");
     const [emailError, setEmailError] = useState("");
     const [emailSending, setEmailSending] = useState(false);
+    const [paymentSaving, setPaymentSaving] = useState(false);
+    const [refundSaving, setRefundSaving] = useState(false);
     const [actionError, setActionError] = useState("");
     const [editError, setEditError] = useState("");
     const [recurringError, setRecurringError] = useState("");
     const [noteError, setNoteError] = useState("");
     const [promiseError, setPromiseError] = useState("");
+    const [refundError, setRefundError] = useState("");
     const [noteType, setNoteType] = useState("");
     const [editingPromise, setEditingPromise] = useState(null);
     const [pdfGenerating, setPdfGenerating] = useState(false);
@@ -51,7 +57,10 @@ export default function InvoiceDetailPage({ invoiceId }) {
     const incomeAccounts = useMemo(() => (accounts || []).filter(isIncomeAccount), [accounts]);
     const hasInvoice = Boolean(invoice);
     const canEditInvoice = Boolean(invoice?.can_edit);
-    const canRecordPayment = Boolean(invoice && moneyAccounts.length && incomeAccounts.length);
+    const invoiceBalanceDue = Math.max(0, Number(invoice?.balance_due || 0));
+    const isFullyPaid = hasInvoice && invoiceBalanceDue <= 0;
+    const canRecordPayment = Boolean(invoice && !isFullyPaid && moneyAccounts.length && incomeAccounts.length);
+    const canRefundInvoice = Boolean(invoice?.can_refund && moneyAccounts.length && incomeAccounts.length);
     const sourceRecurringProfile = invoice?.source_recurring_profile || null;
 
     useEffect(() => {
@@ -70,11 +79,14 @@ export default function InvoiceDetailPage({ invoiceId }) {
     const handlePayment = async (payload) => {
         try {
             setActionError("");
+            setPaymentSaving(true);
             await payInvoice(invoiceId, payload);
             setShowPaymentForm(false);
             setRefreshKey((value) => value + 1);
         } catch (err) {
             setActionError(err?.message || "Unable to record payment.");
+        } finally {
+            setPaymentSaving(false);
         }
     };
 
@@ -87,6 +99,21 @@ export default function InvoiceDetailPage({ invoiceId }) {
             setRefreshKey((value) => value + 1);
         } catch (err) {
             setEditError(err?.message || "Unable to update invoice.");
+        }
+    };
+
+    const handleRefundInvoice = async (payload) => {
+        try {
+            setRefundError("");
+            setRefundSaving(true);
+            await refundInvoice(invoiceId, payload);
+            toast.success("Invoice refunded and voided.");
+            setShowRefundForm(false);
+            setRefreshKey((value) => value + 1);
+        } catch (err) {
+            setRefundError(err?.message || "Unable to refund invoice.");
+        } finally {
+            setRefundSaving(false);
         }
     };
 
@@ -264,17 +291,47 @@ export default function InvoiceDetailPage({ invoiceId }) {
                         >
                             Email Invoice
                         </button>
-                        <button
-                            className="kb-btn kb-btn--primary"
-                            disabled={!hasInvoice}
-                            onClick={() => hasInvoice && setShowPaymentForm(true)}
-                        >
-                            Record Payment
-                        </button>
+                        {!isFullyPaid ? (
+                            <button
+                                className="kb-btn kb-btn--primary"
+                                disabled={!canRecordPayment || paymentSaving}
+                                onClick={() => hasInvoice && canRecordPayment && setShowPaymentForm(true)}
+                            >
+                                {paymentSaving ? "Recording…" : "Record Payment"}
+                            </button>
+                        ) : null}
+                        {hasInvoice && isFullyPaid ? (
+                            <button
+                                className="kb-btn kb-btn--secondary"
+                                disabled={!canRefundInvoice || refundSaving}
+                                onClick={() => {
+                                    setRefundError("");
+                                    setShowRefundForm(true);
+                                }}
+                                title={!canRefundInvoice ? invoice?.refund_block_reason || "This invoice cannot be refunded." : undefined}
+                            >
+                                {refundSaving ? "Refunding…" : "Cancel & Refund"}
+                            </button>
+                        ) : null}
                     </div>
-                    {invoice && !canRecordPayment ? (
+                    {invoice && isFullyPaid ? (
+                        <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+                            {invoice?.refunded_amount > 0 ? "This invoice has been refunded and voided." : "This invoice is fully paid."}
+                        </p>
+                    ) : null}
+                    {invoice && isFullyPaid && invoice?.can_refund && (!moneyAccounts.length || !incomeAccounts.length) ? (
+                        <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+                            Add at least one money account and one income account before processing a refund.
+                        </p>
+                    ) : null}
+                    {invoice && !isFullyPaid && !canRecordPayment ? (
                         <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
                             Add at least one money account and one income account to record payments.
+                        </p>
+                    ) : null}
+                    {invoice && isFullyPaid && !canRefundInvoice && invoice?.refund_block_reason ? (
+                        <p className="kb-muted" style={{ margin: "6px 0 0", fontSize: 13 }}>
+                            {invoice.refund_block_reason}
                         </p>
                     ) : null}
                     {invoice && !canEditInvoice && invoice?.edit_block_reason ? (
@@ -349,7 +406,7 @@ export default function InvoiceDetailPage({ invoiceId }) {
                 </Modal>
             ) : null}
 
-            {showPaymentForm && (
+            {showPaymentForm && !isFullyPaid && (
                 <Modal title="Record Payment" onClose={() => setShowPaymentForm(false)}>
                     <InlineNotice message={actionError} />
                     {canRecordPayment ? (
@@ -359,6 +416,7 @@ export default function InvoiceDetailPage({ invoiceId }) {
                             onCancel={() => setShowPaymentForm(false)}
                             moneyAccounts={moneyAccounts}
                             incomeAccounts={incomeAccounts}
+                            submitting={paymentSaving}
                         />
                     ) : (
                         <p className="kb-muted">
@@ -377,6 +435,26 @@ export default function InvoiceDetailPage({ invoiceId }) {
                         onSubmit={handleUpdateInvoice}
                         onCancel={() => setShowEditForm(false)}
                     />
+                </Modal>
+            ) : null}
+
+            {showRefundForm && invoice ? (
+                <Modal title="Cancel & Refund Invoice" onClose={() => setShowRefundForm(false)} width="min(640px, 96vw)">
+                    <InlineNotice message={refundError} />
+                    {canRefundInvoice ? (
+                        <InvoiceRefundForm
+                            invoice={invoice}
+                            moneyAccounts={moneyAccounts}
+                            incomeAccounts={incomeAccounts}
+                            onSubmit={handleRefundInvoice}
+                            onCancel={() => setShowRefundForm(false)}
+                            submitting={refundSaving}
+                        />
+                    ) : (
+                        <p className="kb-muted">
+                            {invoice?.refund_block_reason || "This invoice cannot be refunded right now."}
+                        </p>
+                    )}
                 </Modal>
             ) : null}
 

@@ -58,7 +58,7 @@ kbs_test('invoice create persists the invoice, items, and customer contact for t
     kbs_assert_same('INV-TEST-001', $invoice['invoice_number'] ?? null);
     kbs_assert_same('Beta Customer', $invoice['customer_name'] ?? null);
     kbs_assert_same('DRAFT', $invoice['status'] ?? null);
-    kbs_assert_same('minimal-clean', $invoice['template_id'] ?? null);
+    kbs_assert_same('modern-clean-blue', $invoice['template_id'] ?? null);
     kbs_assert_same(2500.0, (float) ($invoice['subtotal'] ?? 0));
     kbs_assert_same(360.0, (float) ($invoice['tax_total'] ?? 0));
     kbs_assert_same(2860.0, (float) ($invoice['total'] ?? 0));
@@ -425,6 +425,278 @@ kbs_test('invoice payment rolls back journal writes when payment persistence fai
     kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_entries'), 'Failed payment writes should roll back journal entries.');
     kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines'), 'Failed payment writes should roll back journal lines.');
     kbs_assert_same('SENT', kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoices')[0]['status'] ?? null);
+});
+
+kbs_test('invoice payment rejects duplicate submissions for the same request token', function (): void {
+    kbs_test_add_user([
+        'ID' => 308,
+        'user_email' => 'payment-duplicate@example.com',
+        'display_name' => 'Duplicate Payment User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(308);
+    kbs_test_set_user_meta(308, 'vy_active_org_id', 38);
+    kbs_test_seed_org_membership(308, 38, 'company_admin', true, 'Duplicate Payment Org');
+
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoices', [[
+        'id' => 10,
+        'org_id' => 38,
+        'contact_id' => null,
+        'invoice_number' => 'INV-DUPE-001',
+        'customer_name' => 'Duplicate Customer',
+        'customer_email' => 'duplicate@example.com',
+        'customer_phone' => '5554443333',
+        'date' => '2026-04-03',
+        'due_date' => '2026-04-10',
+        'currency' => 'INR',
+        'subtotal' => 1000.0,
+        'tax_total' => 0.0,
+        'total' => 1000.0,
+        'status' => 'SENT',
+        'template_id' => 'minimal-clean',
+        'notes' => '',
+        'pdf_url' => null,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [
+        [
+            'id' => 85,
+            'org_id' => 38,
+            'code' => 'BANK-DUPE',
+            'name' => 'Duplicate Bank',
+            'type' => 'ASSET',
+            'sub_type' => 'BANK',
+            'currency' => 'INR',
+            'is_system' => 0,
+            'status' => 'ACTIVE',
+            'opening_balance' => 0,
+            'opening_balance_type' => 'DEBIT',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 86,
+            'org_id' => 38,
+            'code' => 'REV-DUPE',
+            'name' => 'Duplicate Revenue',
+            'type' => 'INCOME',
+            'sub_type' => 'OPERATING',
+            'currency' => 'INR',
+            'is_system' => 0,
+            'status' => 'ACTIVE',
+            'opening_balance' => 0,
+            'opening_balance_type' => 'CREDIT',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+    ]);
+
+    $payload = [
+        'amount' => 250,
+        'date' => '2026-04-04',
+        'to_account_id' => 85,
+        'income_account_id' => 86,
+        'client_request_id' => 'same-payment-request',
+    ];
+
+    $first = VyRestInvoices::pay_invoice(kbs_test_make_request('POST', '/vy/v1/invoices/10/pay', ['id' => 10], $payload));
+    $firstResponse = kbs_assert_response($first, 201);
+    kbs_assert_true((int) ($firstResponse->get_data()['payment_id'] ?? 0) > 0, 'The first payment request should succeed.');
+
+    $duplicate = VyRestInvoices::pay_invoice(kbs_test_make_request('POST', '/vy/v1/invoices/10/pay', ['id' => 10], $payload));
+    kbs_assert_wp_error($duplicate, 'vy_duplicate_payment', 409);
+
+    kbs_assert_count(1, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoice_payments'), 'Duplicate submissions should not create a second payment row.');
+});
+
+kbs_test('paid invoice refund voids the invoice and records refund history', function (): void {
+    kbs_test_add_user([
+        'ID' => 309,
+        'user_email' => 'refund@example.com',
+        'display_name' => 'Refund User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(309);
+    kbs_test_set_user_meta(309, 'vy_active_org_id', 39);
+    kbs_test_seed_org_membership(309, 39, 'company_admin', true, 'Refund Org');
+
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoices', [[
+        'id' => 11,
+        'org_id' => 39,
+        'contact_id' => null,
+        'invoice_number' => 'INV-REFUND-001',
+        'customer_name' => 'Refund Customer',
+        'customer_email' => 'refund-customer@example.com',
+        'customer_phone' => '8887776666',
+        'date' => '2026-04-03',
+        'due_date' => '2026-04-10',
+        'currency' => 'INR',
+        'subtotal' => 1000.0,
+        'tax_total' => 0.0,
+        'total' => 1000.0,
+        'status' => 'PAID',
+        'template_id' => 'minimal-clean',
+        'notes' => '',
+        'pdf_url' => 'https://example.test/invoice.pdf',
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoice_payments', [[
+        'id' => 2,
+        'org_id' => 39,
+        'invoice_id' => 11,
+        'journal_id' => 301,
+        'amount' => 1000.0,
+        'date' => '2026-04-04',
+        'created_at' => current_time('mysql'),
+    ]]);
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_accounts', [
+        [
+            'id' => 87,
+            'org_id' => 39,
+            'code' => 'BANK-REF',
+            'name' => 'Refund Bank',
+            'type' => 'ASSET',
+            'sub_type' => 'BANK',
+            'currency' => 'INR',
+            'is_system' => 0,
+            'status' => 'ACTIVE',
+            'opening_balance' => 0,
+            'opening_balance_type' => 'DEBIT',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+        [
+            'id' => 88,
+            'org_id' => 39,
+            'code' => 'REV-REF',
+            'name' => 'Refund Revenue',
+            'type' => 'INCOME',
+            'sub_type' => 'OPERATING',
+            'currency' => 'INR',
+            'is_system' => 0,
+            'status' => 'ACTIVE',
+            'opening_balance' => 0,
+            'opening_balance_type' => 'CREDIT',
+            'created_at' => current_time('mysql'),
+            'updated_at' => current_time('mysql'),
+        ],
+    ]);
+
+    $refund = VyRestInvoices::refund_invoice(kbs_test_make_request('POST', '/vy/v1/invoices/11/refund', ['id' => 11], [
+        'date' => '2026-04-05',
+        'reason' => 'Customer cancelled after payment',
+        'payout_account_id' => 87,
+        'income_account_id' => 88,
+    ]));
+    $refundResponse = kbs_assert_response($refund, 201);
+    $refundData = $refundResponse->get_data();
+
+    kbs_assert_true((int) ($refundData['refund_id'] ?? 0) > 0, 'Refund response should return the created refund ID.');
+    kbs_assert_same('VOID', $refundData['invoice_status'] ?? null);
+    kbs_assert_same(1000.0, (float) ($refundData['refunded_amount'] ?? 0));
+    kbs_assert_same(0.0, (float) ($refundData['net_paid_amount'] ?? 0));
+
+    $invoice = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoices')[0];
+    $refundRows = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoice_refunds');
+    $history = kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_record_history');
+
+    kbs_assert_same('VOID', $invoice['status'] ?? null);
+    kbs_assert_true(array_key_exists('pdf_url', $invoice), 'Refunded invoices should keep the pdf_url field.');
+    kbs_assert_same(null, $invoice['pdf_url']);
+    kbs_assert_count(1, $refundRows, 'Refund flow should persist a refund row.');
+    kbs_assert_count(1, $history, 'Refund flow should write record history.');
+    kbs_assert_same('invoice_refund', $history[0]['record_type'] ?? null);
+    kbs_assert_same('invoice', $history[0]['related_record_type'] ?? null);
+    kbs_assert_count(1, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_entries'), 'Refund flow should write one journal entry.');
+    kbs_assert_count(2, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_journal_lines'), 'Refund flow should write two journal lines.');
+
+    $detail = VyRestInvoices::get_invoice(kbs_test_make_request('GET', '/vy/v1/invoices/11', ['id' => 11]));
+    $detailData = kbs_assert_response($detail, 200)->get_data();
+
+    kbs_assert_same('VOID', $detailData['status'] ?? null);
+    kbs_assert_same(1000.0, (float) ($detailData['refunded_amount'] ?? 0));
+    kbs_assert_same(0.0, (float) ($detailData['net_paid_amount'] ?? 0));
+    kbs_assert_false((bool) ($detailData['can_refund'] ?? true), 'Refunded invoices should not remain refundable.');
+    kbs_assert_count(1, $detailData['refunds'] ?? [], 'Invoice detail should expose recorded refunds.');
+    kbs_assert_count(1, $detailData['history'] ?? [], 'Invoice detail should expose related refund history.');
+    kbs_assert_same('refunded', $detailData['history'][0]['action'] ?? null);
+});
+
+kbs_test('invoice refund blocks invoices that are not fully paid', function (): void {
+    kbs_test_add_user([
+        'ID' => 310,
+        'user_email' => 'refund-blocked@example.com',
+        'display_name' => 'Refund Blocked User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(310);
+    kbs_test_set_user_meta(310, 'vy_active_org_id', 40);
+    kbs_test_seed_org_membership(310, 40, 'company_admin', true, 'Refund Blocked Org');
+
+    kbs_test_seed_table($GLOBALS['wpdb']->prefix . 'vy_invoices', [[
+        'id' => 12,
+        'org_id' => 40,
+        'contact_id' => null,
+        'invoice_number' => 'INV-REFUND-BLOCK',
+        'customer_name' => 'Blocked Customer',
+        'customer_email' => 'blocked@example.com',
+        'customer_phone' => '9998887777',
+        'date' => '2026-04-03',
+        'due_date' => '2026-04-10',
+        'currency' => 'INR',
+        'subtotal' => 1200.0,
+        'tax_total' => 0.0,
+        'total' => 1200.0,
+        'status' => 'SENT',
+        'template_id' => 'minimal-clean',
+        'notes' => '',
+        'pdf_url' => null,
+        'created_at' => current_time('mysql'),
+        'updated_at' => current_time('mysql'),
+    ]]);
+
+    $refund = VyRestInvoices::refund_invoice(kbs_test_make_request('POST', '/vy/v1/invoices/12/refund', ['id' => 12], [
+        'date' => '2026-04-05',
+        'reason' => 'Attempted refund',
+        'payout_account_id' => 1,
+        'income_account_id' => 2,
+    ]));
+
+    kbs_assert_wp_error($refund, 'vy_invoice_refund_blocked', 400);
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoice_refunds'), 'Blocked refunds should not create refund rows.');
+});
+
+kbs_test('invoice create rejects invalid manually entered customer phone numbers', function (): void {
+    kbs_test_add_user([
+        'ID' => 311,
+        'user_email' => 'phone-check@example.com',
+        'display_name' => 'Phone Check User',
+        'roles' => ['c_employee'],
+    ]);
+    kbs_test_set_current_user(311);
+    kbs_test_set_user_meta(311, 'vy_active_org_id', 41);
+    kbs_test_seed_org_membership(311, 41, 'company_admin', true, 'Phone Org');
+
+    $result = VyRestInvoices::create_invoice(kbs_test_make_request('POST', '/vy/v1/invoices', [], [
+        'invoice_number' => 'INV-PHONE-001',
+        'customer_name' => 'Phone Customer',
+        'customer_email' => 'phone@example.com',
+        'customer_phone' => '12345',
+        'date' => '2026-04-03',
+        'status' => 'DRAFT',
+        'items' => [[
+            'description' => 'Phone Validation Line',
+            'quantity' => 1,
+            'unit_price' => 500,
+            'tax_rate' => 0,
+        ]],
+    ]));
+
+    kbs_assert_wp_error($result, 'vy_invalid_customer_phone', 400);
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_contacts'), 'Invalid phone input should not create a contact.');
+    kbs_assert_count(0, kbs_test_get_table($GLOBALS['wpdb']->prefix . 'vy_invoices'), 'Invalid phone input should not create an invoice.');
 });
 
 kbs_test('invoice detail exposes rule-based risk flags before send or PDF actions', function (): void {

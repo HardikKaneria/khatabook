@@ -92,3 +92,22 @@ if (!function_exists('vy_invoice_apply_adjustments')) {
         return $invoice;
     }
 }
+
+if (!function_exists('vy_invoice_refund_total')) {
+    function vy_invoice_refund_total(array $refunds): float
+    {
+        $total = 0.0;
+        foreach ($refunds as $refund) {
+            if (is_array($refund)) {
+                $total += (float) ($refund['amount'] ?? 0);
+                continue;
+            }
+
+            if (is_object($refund)) {
+                $total += (float) ($refund->amount ?? 0);
+            }
+        }
+
+        return round($total, 2);
+    }
+}

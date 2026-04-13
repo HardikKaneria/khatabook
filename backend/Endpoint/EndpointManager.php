@@ -245,6 +245,16 @@ class EndpointManager
             ],
         ]);
 
+        register_rest_route(self::NS, '/organizations', [
+            'methods'             => 'POST',
+            'callback'            => [OrgUsersController::class, 'create_organization'],
+            'permission_callback' => [OrgUsersController::class, 'can_create_organization'],
+            'args'                => [
+                'org_name' => ['type' => 'string', 'required' => true],
+                'industry' => ['type' => 'string', 'required' => false],
+            ],
+        ]);
+
         // Module REST routes
         VyRestAccounts::register_routes();
         VyRestInvoices::register_routes();

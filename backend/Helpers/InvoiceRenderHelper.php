@@ -213,6 +213,7 @@ if (!function_exists('vy_build_preview_sample_invoice')) {
         $items = [
             (object) [
                 'description' => 'Monthly bookkeeping retainer',
+                'detail'      => 'Cost of various services.',
                 'quantity'    => 1,
                 'unit_price'  => 8500,
                 'tax_rate'    => 18,
@@ -222,6 +223,7 @@ if (!function_exists('vy_build_preview_sample_invoice')) {
             ],
             (object) [
                 'description' => 'GST filing support',
+                'detail'      => 'Consultant for your business.',
                 'quantity'    => 2,
                 'unit_price'  => 1200,
                 'tax_rate'    => 18,
@@ -231,6 +233,7 @@ if (!function_exists('vy_build_preview_sample_invoice')) {
             ],
             (object) [
                 'description' => 'Staff travel reimbursement',
+                'detail'      => 'Cost of materials and supplies to complete job.',
                 'quantity'    => 1,
                 'unit_price'  => 750,
                 'tax_rate'    => 0,
@@ -257,14 +260,18 @@ if (!function_exists('vy_build_preview_sample_invoice')) {
             'customer_name'  => 'Acme Retail Pvt Ltd',
             'customer_email' => 'accounts@acmeretail.example',
             'customer_phone' => '+91 98765 43210',
+            'customer_billing_address' => "1234 Clients Street\nCity, California\n90210\nUnited States",
             'date'           => $issueDate,
             'due_date'       => $dueDate,
             'currency'       => $currency,
             'subtotal'       => round($subtotal, 2),
             'tax_total'      => round($taxTotal, 2),
             'total'          => round($total, 2),
+            'discount_amount'=> 0,
+            'deposit_requested' => round($total * 0.1, 2),
+            'deposit_due'       => round($total * 0.1, 2),
             'status'         => 'SENT',
-            'template_id'    => $templateId ?: (string) vy_invoice_setting_value($settings, 'default_template_id', 'minimal-clean'),
+            'template_id'    => $templateId ?: (string) vy_invoice_setting_value($settings, 'default_template_id', 'modern-clean-blue'),
             'pdf_url'        => null,
             'email_sent_at'  => null,
             'email_sent_to'  => null,

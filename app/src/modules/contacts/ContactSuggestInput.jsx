@@ -13,20 +13,29 @@ export default function ContactSuggestInput({
     const [loading, setLoading] = useState(false);
     const [open, setOpen] = useState(false);
     const containerRef = useRef(null);
+    const selectedValueRef = useRef("");
 
     useEffect(() => {
-        if (!value || value.trim().length < 2) {
+        const trimmedValue = value?.trim() || "";
+        if (!trimmedValue || trimmedValue.length < 2) {
             setSuggestions([]);
+            setOpen(false);
+            return;
+        }
+        if (selectedValueRef.current !== "" && trimmedValue === selectedValueRef.current) {
+            setSuggestions([]);
+            setOpen(false);
             return;
         }
         let cancelled = false;
         setLoading(true);
         const timeout = setTimeout(async () => {
             try {
-                const res = await searchContacts({ type, q: value.trim(), perPage: 5 });
+                const res = await searchContacts({ type, q: trimmedValue, perPage: 5 });
                 if (cancelled) return;
-                setSuggestions(res?.data || []);
-                setOpen(true);
+                const nextSuggestions = res?.data || [];
+                setSuggestions(nextSuggestions);
+                setOpen(nextSuggestions.length > 0);
             } catch (err) {
                 console.warn("contact search failed", err);
             } finally {
@@ -50,6 +59,7 @@ export default function ContactSuggestInput({
     }, []);
 
     const handleSelect = (contact) => {
+        selectedValueRef.current = String(contact?.name || value || "").trim();
         onSelect?.(contact);
         setOpen(false);
         setSuggestions([]);
@@ -62,7 +72,15 @@ export default function ContactSuggestInput({
                 className="kb-input"
                 value={value}
                 placeholder={placeholder}
+                onFocus={() => {
+                    if ((value?.trim() || "").length >= 2 && value?.trim() !== selectedValueRef.current && suggestions.length) {
+                        setOpen(true);
+                    }
+                }}
                 onChange={(e) => {
+                    if (selectedValueRef.current !== "") {
+                        selectedValueRef.current = "";
+                    }
                     onValueChange?.(e.target.value);
                     setOpen(true);
                 }}

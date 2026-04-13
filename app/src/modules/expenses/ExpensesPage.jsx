@@ -9,6 +9,11 @@ import { consumeQueryFlag } from "../../utils/locationFlags";
 
 const isMoneyAccount = (acct) => ["BANK", "CASH", "WALLET"].includes((acct?.sub_type || "").toUpperCase());
 const isExpenseAccount = (acct) => (acct?.type || "").toUpperCase() === "EXPENSE";
+const formatCurrency = (value) =>
+    Number(value ?? 0).toLocaleString(undefined, {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    });
 
 export default function ExpensesPage() {
     const [filters, setFilters] = useState(() => {

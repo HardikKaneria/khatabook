@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { createPayment, createReceipt, createTransfer } from "./api";
+import { createPayment, createReceipt, createTransfer, deleteAccount, updateAccount } from "./api";
 import { useAccount, useAccountStatement, useAccounts } from "./hooks";
 import AccountStatementTable from "./AccountStatementTable.jsx";
 import MoneyInForm from "./MoneyInForm.jsx";
 import MoneyOutForm from "./MoneyOutForm.jsx";
 import TransferForm from "./TransferForm.jsx";
+import AccountForm from "./AccountForm.jsx";
 import FeedbackState from "../../components/ui/FeedbackState.jsx";
 import InlineNotice from "../../components/ui/InlineNotice.jsx";
 
@@ -30,9 +31,13 @@ export default function AccountDetailPage({ accountId }) {
     const [showMoneyIn, setShowMoneyIn] = useState(false);
     const [showMoneyOut, setShowMoneyOut] = useState(false);
     const [showTransfer, setShowTransfer] = useState(false);
+    const [showEditForm, setShowEditForm] = useState(false);
     const [moneyInError, setMoneyInError] = useState("");
     const [moneyOutError, setMoneyOutError] = useState("");
     const [transferError, setTransferError] = useState("");
+    const [lifecycleError, setLifecycleError] = useState("");
+    const [lifecycleInfo, setLifecycleInfo] = useState("");
+    const [accountSaving, setAccountSaving] = useState(false);
 
     const { data: account, loading: accountLoading, error: accountError } = useAccount(accountId, refreshKey);
     const {
@@ -45,6 +50,12 @@ export default function AccountDetailPage({ accountId }) {
     const safeAccounts = Array.isArray(allAccounts) ? allAccounts : [];
     const moneyAccounts = useMemo(() => safeAccounts.filter(isMoneyAccount), [safeAccounts]);
     const otherAccounts = useMemo(() => safeAccounts.filter((acct) => !isMoneyAccount(acct)), [safeAccounts]);
+    const accountLifecycle = account?.lifecycle || {};
+    const isArchived = (account?.status || "ACTIVE") === "ARCHIVED";
+    const canDeletePermanently = Boolean(accountLifecycle?.can_delete_permanently);
+    const canEditStructure = Boolean(accountLifecycle?.can_edit_structure);
+    const canEditAccount = Boolean(accountLifecycle?.can_edit);
+    const canChangeStatus = Boolean(accountLifecycle?.can_change_status);
 
     const defaultMoneyAccountId = isMoneyAccount(account) ? account?.id : undefined;
 
@@ -81,6 +92,69 @@ export default function AccountDetailPage({ accountId }) {
         }
     };
 
+    const handleUpdateAccount = async (payload) => {
+        if (!account?.id) return;
+        try {
+            setLifecycleError("");
+            setLifecycleInfo("");
+            setAccountSaving(true);
+            await updateAccount(account.id, payload);
+            setShowEditForm(false);
+            setRefreshKey((value) => value + 1);
+            setLifecycleInfo("Account details updated.");
+        } catch (err) {
+            setLifecycleError(err?.message || "Unable to update account.");
+        } finally {
+            setAccountSaving(false);
+        }
+    };
+
+    const handleArchiveToggle = async () => {
+        if (!account?.id || !canChangeStatus) return;
+        try {
+            setLifecycleError("");
+            setLifecycleInfo("");
+            setAccountSaving(true);
+            await updateAccount(account.id, { status: isArchived ? "ACTIVE" : "ARCHIVED" });
+            setRefreshKey((value) => value + 1);
+            setLifecycleInfo(isArchived ? "Account reactivated for future transactions." : "Account archived for future transactions.");
+        } catch (err) {
+            setLifecycleError(err?.message || "Unable to update account status.");
+        } finally {
+            setAccountSaving(false);
+        }
+    };
+
+    const handleDeleteAccount = async () => {
+        if (!account?.id) return;
+        const confirmed = window.confirm(
+            canDeletePermanently
+                ? "Delete this unused account permanently?"
+                : "This account has journal history and will be archived instead of deleted. Continue?"
+        );
+        if (!confirmed) {
+            return;
+        }
+
+        try {
+            setLifecycleError("");
+            setLifecycleInfo("");
+            setAccountSaving(true);
+            const result = await deleteAccount(account.id);
+            if (result?.action === "deleted") {
+                window.history.pushState({}, "", "/accounts");
+                window.dispatchEvent(new PopStateEvent("popstate"));
+                return;
+            }
+            setRefreshKey((value) => value + 1);
+            setLifecycleInfo("Account archived because it has historical journal activity.");
+        } catch (err) {
+            setLifecycleError(err?.message || "Unable to remove account.");
+        } finally {
+            setAccountSaving(false);
+        }
+    };
+
     const handleFilterChange = (key) => (event) => {
         const value = event.target.value;
         setFilters((prev) => ({ ...prev, [key]: value }));
@@ -105,6 +179,10 @@ export default function AccountDetailPage({ accountId }) {
                 <p style={{ fontSize: 18, fontWeight: 600 }}>
                     Balance: {formatCurrency(account.currentBalance ?? account.balance)}
                 </p>
+                <p className="kb-muted" style={{ margin: "6px 0 0" }}>
+                    {(accountLifecycle?.status || account?.status || "ACTIVE") === "ARCHIVED" ? "Inactive account" : "Active account"}
+                    {accountLifecycle?.status_note ? ` · ${accountLifecycle.status_note}` : ""}
+                </p>
             </div>
         );
     })();
@@ -113,29 +191,65 @@ export default function AccountDetailPage({ accountId }) {
         <div className="space-y-4">
             <header className="kb-card" style={{ padding: 24 }}>
                 {header}
+                <InlineNotice message={lifecycleError} />
+                {lifecycleInfo ? (
+                    <p className="kb-muted" style={{ margin: "8px 0 0" }}>
+                        {lifecycleInfo}
+                    </p>
+                ) : null}
                 <div className="flex gap-2 mt-3 flex-wrap">
                     <button
+                        className="kb-btn kb-btn--secondary"
+                        disabled={!account || !canEditAccount || accountSaving}
+                        onClick={() => {
+                            setLifecycleError("");
+                            setLifecycleInfo("");
+                            setShowEditForm(true);
+                        }}
+                    >
+                        Edit Account
+                    </button>
+                    <button
+                        className="kb-btn kb-btn--ghost"
+                        disabled={!account || !canChangeStatus || accountSaving}
+                        onClick={handleArchiveToggle}
+                    >
+                        {isArchived ? "Reactivate" : "Archive"}
+                    </button>
+                    <button
+                        className="kb-btn kb-btn--ghost"
+                        disabled={!account || accountSaving || (!canDeletePermanently && (!canChangeStatus || isArchived))}
+                        onClick={handleDeleteAccount}
+                    >
+                        {canDeletePermanently ? "Delete Account" : "Archive Instead"}
+                    </button>
+                    <button
                         className="kb-btn kb-btn--primary"
-                        disabled={!moneyAccounts.length || !account}
+                        disabled={!moneyAccounts.length || !account || isArchived}
                         onClick={() => setShowMoneyIn(true)}
                     >
                         Money In
                     </button>
                     <button
                         className="kb-btn kb-btn--secondary"
-                        disabled={!moneyAccounts.length || !otherAccounts.length || !account}
+                        disabled={!moneyAccounts.length || !otherAccounts.length || !account || isArchived}
                         onClick={() => setShowMoneyOut(true)}
                     >
                         Money Out
                     </button>
                     <button
                         className="kb-btn kb-btn--ghost"
-                        disabled={moneyAccounts.length < 2 || !account}
+                        disabled={moneyAccounts.length < 2 || !account || isArchived}
                         onClick={() => setShowTransfer(true)}
                     >
                         Transfer
                     </button>
                 </div>
+                {isArchived ? (
+                    <p className="kb-muted" style={{ margin: "8px 0 0" }}>
+                        Archived accounts remain visible in history but cannot be used for new receipts, payments, or transfers.
+                    </p>
+                ) : null}
             </header>
 
             <section className="kb-card" style={{ padding: 24 }}>
@@ -189,6 +303,22 @@ export default function AccountDetailPage({ accountId }) {
                     />
                 </Modal>
             )}
+
+            {showEditForm && account ? (
+                <Modal title="Edit Account" onClose={() => setShowEditForm(false)}>
+                    <InlineNotice message={lifecycleError} />
+                    <AccountForm
+                        initialData={account}
+                        submitLabel="Save Changes"
+                        onSubmit={handleUpdateAccount}
+                        onCancel={() => setShowEditForm(false)}
+                        loading={accountSaving}
+                        showStatusField
+                        structuralFieldsDisabled={!canEditStructure}
+                        helpText={!canEditStructure ? "This account already has journal history, so only its display fields and active status can be changed." : ""}
+                    />
+                </Modal>
+            ) : null}
         </div>
     );
 }

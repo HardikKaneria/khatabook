@@ -9,6 +9,12 @@ export const getAccounts = (params = {}) =>
 export const getAccount = (id) =>
     apiClient.get(`${BASE}/accounts/${id}`);
 
+export const updateAccount = (id, payload = {}) =>
+    apiClient.put(`${BASE}/accounts/${id}`, payload);
+
+export const deleteAccount = (id) =>
+    apiClient.del(`${BASE}/accounts/${id}`);
+
 export const getAccountStatement = (id, params = {}) =>
     apiClient.get(`${BASE}/accounts/${id}/statement${buildQuery(params)}`);
 

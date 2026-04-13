@@ -44,6 +44,15 @@ function getKeyFromLocation() {
     return seg || "home";
 }
 
+function formatOrgRole(role) {
+    const value = String(role || "").toLowerCase();
+    if (value === "company_admin") return "Company Admin";
+    if (value === "c_manager") return "Manager";
+    if (value === "c_employee") return "Employee";
+    if (value === "administrator") return "Administrator";
+    return role || "Member";
+}
+
 export default function ResponsiveShell({ children, user }) {
     const screens = useBreakpoint();
     const isDesktop = !!screens.lg;
@@ -77,7 +86,7 @@ export default function ResponsiveShell({ children, user }) {
             { key: "expenses", icon: <DollarCircleOutlined />, label: "Expenses", href: "/expenses" },
             { key: "reports", icon: <BarChartOutlined />, label: "Profit & Tax", href: "/reports" },
         ];
-        if (role === "company_admin") {
+        if (role === "company_admin" || role === "administrator") {
             base.push(
                 { key: "company-settings", icon: <SettingOutlined />, label: "Company Settings", href: "/company-settings" },
                 { key: "settings", icon: <FileOutlined />, label: "Invoice Settings", href: "/settings/invoices" },
@@ -239,7 +248,7 @@ export default function ResponsiveShell({ children, user }) {
                             options={user.orgs.map((org) => ({
                                 value: Number(org.org_id),
                                 label: org.org_name
-                                    ? `${org.org_name}${org.role ? ` (${org.role.replace("c_", "").replace("_", " ")})` : ""}`
+                                    ? `${org.org_name}${org.role ? ` (${formatOrgRole(org.role)})` : ""}`
                                     : `Organization #${org.org_id}`,
                             }))}
                         />

@@ -15,6 +15,9 @@ defined('ABSPATH') || exit;
 
 class VyRestInvoices
 {
+    private const PAYMENT_SUBMISSION_TTL = 45;
+    private const PAYMENT_SUBMISSION_TTL_EXPLICIT = 3600;
+
     public static function register_routes(): void
     {
         register_rest_route(VyRestAccounts::NS, '/invoices', [
@@ -44,6 +47,12 @@ class VyRestInvoices
         register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/pay', [
             'methods'             => WP_REST_Server::CREATABLE,
             'callback'            => [__CLASS__, 'pay_invoice'],
+            'permission_callback' => [VyRestAccounts::class, 'require_auth'],
+        ]);
+
+        register_rest_route(VyRestAccounts::NS, '/invoices/(?P<id>\d+)/refund', [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => [__CLASS__, 'refund_invoice'],
             'permission_callback' => [VyRestAccounts::class, 'require_auth'],
         ]);
 
@@ -214,8 +223,10 @@ class VyRestInvoices
             $params[] = sanitize_text_field($status);
         }
         if ($customer = $request->get_param('customer_name')) {
-            $where[] = 'customer_name LIKE %s';
-            $params[] = '%' . $wpdb->esc_like($customer) . '%';
+            $where[] = '(customer_name LIKE %s OR invoice_number LIKE %s)';
+            $customerLike = '%' . $wpdb->esc_like((string) $customer) . '%';
+            $params[] = $customerLike;
+            $params[] = $customerLike;
         }
 
         $page = max(1, (int) ($request->get_param('page') ?? 1));
@@ -241,6 +252,10 @@ class VyRestInvoices
                 $paid,
                 $noteTotalsMap[(int) $row->id] ?? null
             );
+            $refunded = self::get_refunded_amount((int) $org, (int) $row->id);
+            $balanceDue = strtoupper((string) ($row->status ?? 'SENT')) === 'VOID' && $refunded > 0
+                ? 0.0
+                : (float) ($financials['balance_due'] ?? 0);
             $invoices[] = [
                 'id'             => (int) $row->id,
                 'contact_id'     => $row->contact_id ? (int) $row->contact_id : null,
@@ -255,9 +270,11 @@ class VyRestInvoices
                 'adjusted_total' => (float) ($financials['adjusted_total'] ?? (float) $row->total),
                 'status'         => $row->status,
                 'paid_amount'    => $paid,
+                'refunded_amount'=> $refunded,
+                'net_paid_amount'=> round(max(0, $paid - $refunded), 2),
                 'credit_total'   => (float) ($financials['credit_total'] ?? 0),
                 'debit_total'    => (float) ($financials['debit_total'] ?? 0),
-                'balance_due'    => (float) ($financials['balance_due'] ?? 0),
+                'balance_due'    => $balanceDue,
             ];
         }
 
@@ -305,11 +322,16 @@ class VyRestInvoices
         $invoice = self::apply_invoice_financials((int) $org, $invoice);
         $invoice['items'] = $items ?: [];
         $invoice['payments'] = $payments;
+        $invoice['refunds'] = self::get_invoice_refunds((int) $org, (int) $invoice['id']);
         $invoice['adjustments'] = self::fetch_invoice_notes((int) $org, (int) $invoice['id']);
         $invoice['promises'] = self::fetch_invoice_promises((int) $org, ['invoice_id' => (int) $invoice['id']]);
         $editState = vy_invoice_edit_state($invoice, $payments);
         $invoice['can_edit'] = $editState['can_edit'];
         $invoice['edit_block_reason'] = $editState['reason'];
+        $refundState = self::invoice_refund_state($invoice);
+        $invoice['can_refund'] = $refundState['can_refund'];
+        $invoice['refund_block_reason'] = $refundState['reason'];
+        $invoice['refundable_amount'] = $refundState['amount'];
         $invoice['risk_summary'] = vy_get_invoice_risk_summary(
             (int) $org,
             $invoice,
@@ -530,9 +552,15 @@ class VyRestInvoices
         if (!$toAccount || !in_array(strtoupper($toAccount['sub_type'] ?? ''), ['BANK', 'CASH', 'WALLET'], true)) {
             return new WP_Error('vy_invalid_bank', 'The receiving account must be a bank/cash account.', ['status' => 400]);
         }
+        if (($activeError = self::ensure_account_row_is_active($toAccount, 'vy_account_archived', 'The receiving account is archived and cannot accept new payments.')) instanceof WP_Error) {
+            return $activeError;
+        }
         $incomeAccount = self::fetch_account_row((int) $org, $incomeAccountId);
         if (!$incomeAccount || strtoupper($incomeAccount['type'] ?? '') !== 'INCOME') {
             return new WP_Error('vy_invalid_income', 'The income account must be of type INCOME.', ['status' => 400]);
+        }
+        if (($activeError = self::ensure_account_row_is_active($incomeAccount, 'vy_account_archived', 'The income account is archived and cannot receive new payment postings.')) instanceof WP_Error) {
+            return $activeError;
         }
 
         $financials = self::apply_invoice_financials((int) $org, $invoice);
@@ -543,6 +571,11 @@ class VyRestInvoices
         }
         if ($amount > $outstanding + 0.01) {
             return new WP_Error('vy_amount_exceeds', 'Payment exceeds outstanding balance.', ['status' => 400]);
+        }
+
+        $submissionGuard = self::begin_payment_submission_guard((int) $invoice['id'], (array) $body);
+        if (is_wp_error($submissionGuard)) {
+            return $submissionGuard;
         }
 
         global $wpdb;
@@ -574,6 +607,7 @@ class VyRestInvoices
 
         if (is_wp_error($journalResult)) {
             $wpdb->query('ROLLBACK');
+            self::clear_payment_submission_guard($submissionGuard);
             return $journalResult;
         }
 
@@ -591,6 +625,7 @@ class VyRestInvoices
         );
         if ($paymentInserted === false) {
             $wpdb->query('ROLLBACK');
+            self::clear_payment_submission_guard($submissionGuard);
             return new WP_Error('vy_payment_insert_failed', 'Failed to record invoice payment.', ['status' => 500]);
         }
         $paymentId = (int) $wpdb->insert_id;
@@ -608,6 +643,7 @@ class VyRestInvoices
 
         if ($updated === false) {
             $wpdb->query('ROLLBACK');
+            self::clear_payment_submission_guard($submissionGuard);
             return new WP_Error('vy_invoice_status_update_failed', 'Failed to update invoice status after payment.', ['status' => 500]);
         }
 
@@ -654,7 +690,7 @@ class VyRestInvoices
             );
         }
 
-        return new WP_REST_Response([
+        $responseData = [
             'success'        => true,
             'invoice_id'     => $invoice['id'],
             'payment_id'     => $paymentId > 0 ? $paymentId : null,
@@ -662,6 +698,177 @@ class VyRestInvoices
             'paid_amount'    => $paidTotal,
             'balance_due'    => max(0, (float) (($updatedInvoiceForBalance['adjusted_total'] ?? $invoice['total']) - $paidTotal)),
             'invoice_status' => $status,
+        ];
+
+        self::complete_payment_submission_guard($submissionGuard);
+
+        return new WP_REST_Response($responseData, 201);
+    }
+
+    public static function refund_invoice(WP_REST_Request $request)
+    {
+        $org = \vy_get_current_org_id();
+        if (is_wp_error($org)) {
+            return $org;
+        }
+
+        $invoice = self::fetch_invoice((int) $org, (int) $request['id']);
+        if (!$invoice) {
+            return new WP_Error('vy_not_found', 'Invoice not found.', ['status' => 404]);
+        }
+
+        $invoice = self::apply_invoice_financials((int) $org, $invoice);
+        $refundState = self::invoice_refund_state($invoice);
+        if (!$refundState['can_refund']) {
+            return new WP_Error('vy_invoice_refund_blocked', $refundState['reason'] ?: 'This invoice cannot be refunded.', ['status' => 400]);
+        }
+
+        $body = $request->get_json_params() ?: [];
+        $refundAmount = round((float) ($refundState['amount'] ?? 0), 2);
+        if ($refundAmount <= 0) {
+            return new WP_Error('vy_invoice_refund_amount', 'This invoice has no refundable amount.', ['status' => 400]);
+        }
+
+        $payoutAccountId = (int) ($body['payout_account_id'] ?? 0);
+        $incomeAccountId = (int) ($body['income_account_id'] ?? 0);
+        if ($payoutAccountId <= 0 || $incomeAccountId <= 0) {
+            return new WP_Error('vy_bad_accounts', 'Refund payout and income accounts are required.', ['status' => 400]);
+        }
+
+        $payoutAccount = self::fetch_account_row((int) $org, $payoutAccountId);
+        if (!$payoutAccount || !in_array(strtoupper((string) ($payoutAccount['sub_type'] ?? '')), ['BANK', 'CASH', 'WALLET'], true)) {
+            return new WP_Error('vy_invalid_refund_account', 'The refund payout account must be a bank, cash, or wallet account.', ['status' => 400]);
+        }
+        if (($activeError = self::ensure_account_row_is_active($payoutAccount, 'vy_account_archived', 'The refund payout account is archived and cannot post refunds.')) instanceof WP_Error) {
+            return $activeError;
+        }
+
+        $incomeAccount = self::fetch_account_row((int) $org, $incomeAccountId);
+        if (!$incomeAccount || strtoupper((string) ($incomeAccount['type'] ?? '')) !== 'INCOME') {
+            return new WP_Error('vy_invalid_income', 'The refund income account must be of type INCOME.', ['status' => 400]);
+        }
+        if (($activeError = self::ensure_account_row_is_active($incomeAccount, 'vy_account_archived', 'The refund income account is archived and cannot post refunds.')) instanceof WP_Error) {
+            return $activeError;
+        }
+
+        $refundDate = self::normalize_date_input($body['date'] ?? null, gmdate('Y-m-d'));
+        $reason = sanitize_text_field((string) ($body['reason'] ?? ''));
+        if ($reason === '') {
+            return new WP_Error('vy_refund_reason_required', 'Refund reason is required.', ['status' => 400]);
+        }
+
+        global $wpdb;
+        $timestamp = current_time('mysql', true);
+        $wpdb->query('START TRANSACTION');
+
+        $journalId = VyJournalEngine::create_journal_entry([
+            'org_id'        => (int) $org,
+            'date'          => $refundDate,
+            'type'          => 'REFUND',
+            'description'   => sprintf('Invoice refund for %s', (string) ($invoice['invoice_number'] ?? ('#' . $invoice['id']))),
+            'reference'     => sanitize_text_field((string) ($body['reference'] ?? '')),
+            'source_module' => 'invoice_refund',
+            'source_id'     => (int) $invoice['id'],
+            'lines'         => [
+                [
+                    'account_id' => $incomeAccountId,
+                    'debit'      => $refundAmount,
+                    'credit'     => 0,
+                    'line_memo'  => 'Invoice refund reversal',
+                ],
+                [
+                    'account_id' => $payoutAccountId,
+                    'debit'      => 0,
+                    'credit'     => $refundAmount,
+                    'line_memo'  => 'Customer refund payout',
+                ],
+            ],
+        ]);
+
+        if (is_wp_error($journalId)) {
+            $wpdb->query('ROLLBACK');
+            return $journalId;
+        }
+
+        $refundInserted = $wpdb->insert(
+            $wpdb->prefix . 'vy_invoice_refunds',
+            [
+                'org_id'            => (int) $org,
+                'invoice_id'        => (int) $invoice['id'],
+                'journal_id'        => (int) $journalId,
+                'payout_account_id' => $payoutAccountId,
+                'income_account_id' => $incomeAccountId,
+                'amount'            => $refundAmount,
+                'date'              => $refundDate,
+                'reason'            => $reason,
+                'created_at'        => $timestamp,
+            ],
+            ['%d', '%d', '%d', '%d', '%d', '%f', '%s', '%s', '%s']
+        );
+
+        if ($refundInserted === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_refund_insert_failed', 'Failed to record invoice refund.', ['status' => 500]);
+        }
+        $refundId = (int) $wpdb->insert_id;
+
+        $updated = $wpdb->update(
+            $wpdb->prefix . 'vy_invoices',
+            [
+                'status'     => 'VOID',
+                'pdf_url'    => null,
+                'updated_at' => $timestamp,
+            ],
+            [
+                'org_id' => (int) $org,
+                'id'     => (int) $invoice['id'],
+            ],
+            ['%s', '%s', '%s'],
+            ['%d', '%d']
+        );
+
+        if ($updated === false) {
+            $wpdb->query('ROLLBACK');
+            return new WP_Error('vy_invoice_refund_update_failed', 'Failed to update invoice status after refund.', ['status' => 500]);
+        }
+
+        $wpdb->query('COMMIT');
+
+        RecordAuditLogger::log(
+            (int) $org,
+            'invoice_refund',
+            $refundId,
+            'refunded',
+            sprintf('Refunded and voided invoice %s', (string) ($invoice['invoice_number'] ?? ('#' . $invoice['id']))),
+            [
+                'lines' => [
+                    'Refund amount: ' . RecordAuditLogger::money($refundAmount, (string) ($invoice['currency'] ?? 'INR')),
+                    'Refund date: ' . $refundDate,
+                    'Payout account: ' . (string) ($payoutAccount['name'] ?? '—'),
+                    'Income account: ' . (string) ($incomeAccount['name'] ?? '—'),
+                    'Reason: ' . $reason,
+                    'Journal: #' . (int) $journalId,
+                ],
+            ],
+            'invoice',
+            (int) $invoice['id']
+        );
+
+        $refundedInvoice = self::apply_invoice_financials((int) $org, array_merge($invoice, [
+            'status' => 'VOID',
+            'pdf_url' => null,
+            'updated_at' => $timestamp,
+        ]));
+
+        return new WP_REST_Response([
+            'success'         => true,
+            'invoice_id'      => (int) $invoice['id'],
+            'refund_id'       => $refundId,
+            'journal_id'      => (int) $journalId,
+            'invoice_status'  => 'VOID',
+            'refunded_amount' => (float) ($refundedInvoice['refunded_amount'] ?? $refundAmount),
+            'net_paid_amount' => (float) ($refundedInvoice['net_paid_amount'] ?? 0),
+            'balance_due'     => (float) ($refundedInvoice['balance_due'] ?? 0),
         ], 201);
     }
 
@@ -2104,8 +2311,16 @@ class VyRestInvoices
     {
         $paidAmount = self::get_paid_amount((int) ($invoice['id'] ?? 0));
         $noteTotals = vy_invoice_note_totals_for_invoice($org_id, (int) ($invoice['id'] ?? 0));
+        $refundedAmount = self::get_refunded_amount($org_id, (int) ($invoice['id'] ?? 0));
+        $invoice = vy_invoice_apply_adjustments($invoice, $paidAmount, $noteTotals);
+        $invoice['refunded_amount'] = $refundedAmount;
+        $invoice['net_paid_amount'] = round(max(0, (float) ($invoice['paid_amount'] ?? 0) - $refundedAmount), 2);
 
-        return vy_invoice_apply_adjustments($invoice, $paidAmount, $noteTotals);
+        if (strtoupper((string) ($invoice['status'] ?? 'SENT')) === 'VOID' && $refundedAmount > 0) {
+            $invoice['balance_due'] = 0.0;
+        }
+
+        return $invoice;
     }
 
     private static function fetch_invoice_promises(int $org_id, array $filters = []): array
@@ -2182,6 +2397,115 @@ class VyRestInvoices
         ), ARRAY_A);
 
         return $row ?: null;
+    }
+
+    private static function get_invoice_refunds(int $org_id, int $invoice_id): array
+    {
+        global $wpdb;
+        $rows = $wpdb->get_results($wpdb->prepare(
+            "SELECT id, journal_id, payout_account_id, income_account_id, amount, date, reason, created_at
+             FROM {$wpdb->prefix}vy_invoice_refunds
+             WHERE org_id = %d AND invoice_id = %d
+             ORDER BY date DESC, id DESC",
+            $org_id,
+            $invoice_id
+        ), ARRAY_A);
+
+        if (!$rows) {
+            return [];
+        }
+
+        return array_map(function (array $row) use ($org_id): array {
+            $payoutAccount = !empty($row['payout_account_id']) ? self::fetch_account_row($org_id, (int) $row['payout_account_id']) : null;
+            $incomeAccount = !empty($row['income_account_id']) ? self::fetch_account_row($org_id, (int) $row['income_account_id']) : null;
+
+            return [
+                'id'             => (int) ($row['id'] ?? 0),
+                'journal_id'     => !empty($row['journal_id']) ? (int) $row['journal_id'] : null,
+                'amount'         => round((float) ($row['amount'] ?? 0), 2),
+                'date'           => (string) ($row['date'] ?? ''),
+                'reason'         => (string) ($row['reason'] ?? ''),
+                'created_at'     => (string) ($row['created_at'] ?? ''),
+                'payout_account' => $payoutAccount ? [
+                    'id'   => (int) ($payoutAccount['id'] ?? 0),
+                    'name' => (string) ($payoutAccount['name'] ?? ''),
+                ] : null,
+                'income_account' => $incomeAccount ? [
+                    'id'   => (int) ($incomeAccount['id'] ?? 0),
+                    'name' => (string) ($incomeAccount['name'] ?? ''),
+                ] : null,
+            ];
+        }, $rows);
+    }
+
+    private static function get_refunded_amount(int $org_id, int $invoice_id): float
+    {
+        if ($invoice_id <= 0) {
+            return 0.0;
+        }
+
+        global $wpdb;
+        $sum = $wpdb->get_var($wpdb->prepare(
+            "SELECT SUM(amount) FROM {$wpdb->prefix}vy_invoice_refunds WHERE invoice_id = %d",
+            $invoice_id
+        ));
+
+        return round((float) ($sum ?: 0), 2);
+    }
+
+    private static function invoice_refund_state(array $invoice): array
+    {
+        $status = strtoupper((string) ($invoice['status'] ?? 'SENT'));
+        $paidAmount = round((float) ($invoice['paid_amount'] ?? 0), 2);
+        $refundedAmount = round((float) ($invoice['refunded_amount'] ?? 0), 2);
+        $netPaidAmount = round(max(0, (float) ($invoice['net_paid_amount'] ?? ($paidAmount - $refundedAmount))), 2);
+        $balanceDue = round((float) ($invoice['balance_due'] ?? 0), 2);
+
+        if ($status === 'VOID' && $refundedAmount > 0) {
+            return [
+                'can_refund' => false,
+                'reason'     => 'This invoice has already been refunded and voided.',
+                'amount'     => 0.0,
+            ];
+        }
+
+        if ($status === 'VOID') {
+            return [
+                'can_refund' => false,
+                'reason'     => 'Void invoices cannot be refunded.',
+                'amount'     => 0.0,
+            ];
+        }
+
+        if ($status !== 'PAID') {
+            return [
+                'can_refund' => false,
+                'reason'     => 'Only fully paid invoices can be cancelled and refunded.',
+                'amount'     => 0.0,
+            ];
+        }
+
+        if ($paidAmount <= 0 || $netPaidAmount <= 0) {
+            return [
+                'can_refund' => false,
+                'reason'     => 'This invoice has no refundable payment balance.',
+                'amount'     => 0.0,
+            ];
+        }
+
+        if ($balanceDue > 0.01) {
+            return [
+                'can_refund' => false,
+                'reason'     => 'Only fully settled invoices can be refunded.',
+                'amount'     => 0.0,
+            ];
+        }
+
+        return [
+            'can_refund' => true,
+            'reason'     => null,
+            'amount'     => $netPaidAmount,
+        ];
     }
 
     private static function format_promise_row(int $org_id, array $row): array
@@ -2452,11 +2776,97 @@ class VyRestInvoices
         if ($account_id <= 0) return null;
         global $wpdb;
         $row = $wpdb->get_row($wpdb->prepare(
-            "SELECT id, name, type, sub_type FROM {$wpdb->prefix}vy_accounts WHERE org_id = %d AND id = %d LIMIT 1",
+            "SELECT id, name, type, sub_type, status FROM {$wpdb->prefix}vy_accounts WHERE org_id = %d AND id = %d LIMIT 1",
             $org_id,
             $account_id
         ), ARRAY_A);
         return $row ?: null;
+    }
+
+    private static function ensure_account_row_is_active(array $account, string $code, string $message): ?WP_Error
+    {
+        if (strtoupper((string) ($account['status'] ?? 'ACTIVE')) === 'ARCHIVED') {
+            return new WP_Error($code, $message, ['status' => 400]);
+        }
+
+        return null;
+    }
+
+    private static function begin_payment_submission_guard(int $invoiceId, array $body): array|WP_Error
+    {
+        $userId = (int) get_current_user_id();
+        if ($userId <= 0) {
+            return [
+                'user_id' => 0,
+                'meta_key' => '',
+            ];
+        }
+
+        $explicitRequestId = trim((string) sanitize_key((string) ($body['client_request_id'] ?? '')));
+        $signature = $explicitRequestId !== ''
+            ? $explicitRequestId
+            : md5(wp_json_encode([
+                'invoice_id' => $invoiceId,
+                'date' => (string) ($body['date'] ?? ''),
+                'amount' => round((float) ($body['amount'] ?? 0), 2),
+                'to_account_id' => (int) ($body['to_account_id'] ?? 0),
+                'income_account_id' => (int) ($body['income_account_id'] ?? 0),
+                'description' => sanitize_text_field((string) ($body['description'] ?? '')),
+                'reference' => sanitize_text_field((string) ($body['reference'] ?? '')),
+            ]));
+        $ttl = $explicitRequestId !== '' ? self::PAYMENT_SUBMISSION_TTL_EXPLICIT : self::PAYMENT_SUBMISSION_TTL;
+        $metaKey = 'vy_payment_guard_' . $invoiceId . '_' . substr(md5($signature), 0, 24);
+        $existing = get_user_meta($userId, $metaKey, true);
+        $now = time();
+
+        if (is_array($existing)) {
+            $existingStatus = (string) ($existing['status'] ?? '');
+            $existingTimestamp = (int) ($existing['timestamp'] ?? 0);
+            if ($existingStatus !== '' && ($now - $existingTimestamp) < $ttl) {
+                return new WP_Error(
+                    'vy_duplicate_payment',
+                    $existingStatus === 'processing'
+                        ? 'This payment is already being processed. Please wait or refresh the invoice.'
+                        : 'This payment request was already submitted. Refresh the invoice before trying again.',
+                    ['status' => 409]
+                );
+            }
+        }
+
+        update_user_meta($userId, $metaKey, [
+            'status' => 'processing',
+            'timestamp' => $now,
+        ]);
+
+        return [
+            'user_id' => $userId,
+            'meta_key' => $metaKey,
+        ];
+    }
+
+    private static function complete_payment_submission_guard(array $guard): void
+    {
+        $userId = (int) ($guard['user_id'] ?? 0);
+        $metaKey = (string) ($guard['meta_key'] ?? '');
+        if ($userId <= 0 || $metaKey === '') {
+            return;
+        }
+
+        update_user_meta($userId, $metaKey, [
+            'status' => 'completed',
+            'timestamp' => time(),
+        ]);
+    }
+
+    private static function clear_payment_submission_guard(array $guard): void
+    {
+        $userId = (int) ($guard['user_id'] ?? 0);
+        $metaKey = (string) ($guard['meta_key'] ?? '');
+        if ($userId <= 0 || $metaKey === '') {
+            return;
+        }
+
+        delete_user_meta($userId, $metaKey);
     }
 
     private static function fetch_payment_account_summary(int $org_id, int $journal_id): ?array
@@ -2511,7 +2921,14 @@ class VyRestInvoices
         $contactId = isset($body['contact_id']) ? (int) $body['contact_id'] : 0;
         $name = sanitize_text_field($body['customer_name'] ?? '');
         $email = sanitize_email($body['customer_email'] ?? '');
-        $phone = sanitize_text_field($body['customer_phone'] ?? '');
+        $phoneProvided = array_key_exists('customer_phone', $body);
+        $phone = $phoneProvided
+            ? self::sanitize_customer_phone((string) ($body['customer_phone'] ?? ''), $contactId <= 0)
+            : '';
+
+        if (is_wp_error($phone)) {
+            return $phone;
+        }
 
         if ($contactId > 0) {
             $contact = self::fetch_contact($org_id, $contactId);
@@ -2556,6 +2973,29 @@ class VyRestInvoices
             'email'      => $email,
             'phone'      => $phone,
         ];
+    }
+
+    private static function sanitize_customer_phone(string $rawPhone, bool $strictWhenPresent = true)
+    {
+        $rawPhone = trim($rawPhone);
+        if ($rawPhone === '') {
+            return '';
+        }
+
+        $digits = preg_replace('/\D+/', '', $rawPhone) ?? '';
+        if ($digits === '') {
+            if ($strictWhenPresent) {
+                return new WP_Error('vy_invalid_customer_phone', 'Customer phone must be a valid 10-digit number.', ['status' => 400]);
+            }
+
+            return '';
+        }
+
+        if (strlen($digits) !== 10) {
+            return new WP_Error('vy_invalid_customer_phone', 'Customer phone must be a valid 10-digit number.', ['status' => 400]);
+        }
+
+        return $digits;
     }
 
     private static function insert_contact(int $org_id, array $data)
